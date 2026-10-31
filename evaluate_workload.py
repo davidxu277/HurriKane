@@ -9,6 +9,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from analysis_provenance import saved_prediction_context
+
 
 REQUIRED_COLUMNS = ("event_id", "final_tier", "has_future", "baseline_score", "alert_score")
 TIERS = ("Safe", "Elevated", "Critical")
@@ -227,7 +229,10 @@ def save_curve(report, curves, path):
         axes.grid(alpha=0.2)
     panels[0].set_ylabel("Recall of final Critical events")
     split = "Validation (development only)" if report["split"] == "validation" else "Holdout"
-    figure.suptitle(f"{split} | final_tier = Critical | target recall {report['target_recall']:.0%}")
+    context = report.get("provenance")
+    suffix = (f" | {context['variant']} saved predictions | {context['holdout_look_count']} holdout looks"
+              if context else "")
+    figure.suptitle(f"{split} | final_tier = Critical | target recall {report['target_recall']:.0%}{suffix}")
     figure.tight_layout()
     figure.savefig(path, dpi=170)
     plt.close(figure)
@@ -265,14 +270,22 @@ def _markdown(report):
     lines = [f"# {title}", "", f"输入：`{report['source_file']}`，共 {report['input_events']} 个事件。", "",
              "目标为 `final_tier == 'Critical'`；直接使用 A 输出的最终等级标签，不按 Pc 阈值或输入距离重新推导真值。", "",
              "主结果只评估 has_future=True；全部事件另列为补充，避免把标签已知的事件混入主结果。两种排序直接使用文件中的 baseline_score 和 alert_score。", ""]
+    context = report.get("provenance")
+    if context:
+        lines += [f"模型 `{context['variant']}`，保存预测版本 `{context['prediction_model_version']}`；当前 bundle 版本 `{context['current_bundle_model_version']}`。", "",
+                  f"**留出集共看了 {context['holdout_look_count']} 次**；本次仅重算保存预测的复核量，不训练或重新预测，不增加一次模型评估。", ""]
+        lines += [f"- {warning}" for warning in context["warnings"]] + [""]
     lines += _scope_markdown(report) + _scope_markdown(report["supplementary_all"])
     boot = report["bootstrap"]
+    provenance_command = (f" --metrics \"{context['metrics_file']}\" --model-metadata \"{context['metadata_file']}\""
+                          f" --holdout-look-count {context['holdout_look_count']} --source-commit {context['source_commit']}"
+                          if context else "")
     lines += ["这是对已知标签的事后排序评估；不能用它承诺未标注数据也达到相同召回率。验证集结果用于开发，最终效果需在模型和规则固定后用留出集确认。", "",
               "不根据这份结果重抽事件切分、选择更好看的种子或调整留出集。脚本不训练模型、不读取原始数据和其他预测文件。", "",
               f"输入文件 SHA256：`{report['source_sha256']}`。", "",
               "## 复现命令", "", "在项目根目录、安装了 pandas、NumPy、Matplotlib 的 Python 环境中运行：", "",
               "```powershell",
-              f"python evaluate_workload.py --predictions \"{report['source_file']}\" --split {report['split']} --target-recall {report['target_recall']} --bootstrap {boot['iterations']} --seed {boot['seed']}",
+              f"python evaluate_workload.py --predictions \"{report['source_file']}\" --split {report['split']} --target-recall {report['target_recall']} --bootstrap {boot['iterations']} --seed {boot['seed']}{provenance_command}",
               "```", "",
               "JSON 顶层指标是主结果，supplementary_all 为补充结果；读取 `_curve.csv` 必须按 scope=future/all 分组，不能把两组曲线连成一条。`_curve.png` 分两栏展示。验证集产物必须标注为开发结果。", ""]
     return "\n".join(lines)
@@ -286,6 +299,10 @@ def main():
     parser.add_argument("--bootstrap", type=int, default=1000)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output", help="JSON 输出；同时生成同名 .md、_curve.csv 和 _curve.png")
+    parser.add_argument("--metrics", help="与预测配套的已保存指标 JSON；连同 --model-metadata 记录来源")
+    parser.add_argument("--model-metadata", help="当前 bundle metadata JSON；只读取，不加载模型")
+    parser.add_argument("--holdout-look-count", type=int)
+    parser.add_argument("--source-commit", help="保存预测及模型材料所在的固定 Git 提交号")
     args = parser.parse_args()
     source = Path(args.predictions)
     known = {"validation_predictions.csv": "validation", "holdout_predictions.csv": "holdout"}
@@ -294,17 +311,34 @@ def main():
         parser.error("非标准预测文件名需用 --split 明确 validation 或 holdout")
     if source.name in known and split != known[source.name]:
         parser.error("--split 与标准预测文件名不符，不能把验证集标为留出集")
+    context = None
+    if any(value is not None for value in (args.metrics, args.model_metadata, args.holdout_look_count, args.source_commit)):
+        if split != "holdout" or not all((args.metrics, args.model_metadata, args.holdout_look_count, args.source_commit)):
+            parser.error("留出来源需同时提供 --metrics、--model-metadata、--holdout-look-count、--source-commit")
+        context = saved_prediction_context(args.metrics, args.model_metadata, args.holdout_look_count, args.source_commit)
     output = Path(args.output) if args.output else Path(f"reports/workload_{split}.json")
     if output.suffix.lower() != ".json":
         parser.error("--output must end in .json")
     curves_path = output.with_name(output.stem + "_curve.csv")
     image_path = output.with_name(output.stem + "_curve.png")
-    if source.resolve() in {output.resolve(), output.with_suffix(".md").resolve(), curves_path.resolve(), image_path.resolve()}:
+    inputs = {source.resolve()} | {Path(path).resolve() for path in (args.metrics, args.model_metadata) if path}
+    if inputs & {output.resolve(), output.with_suffix(".md").resolve(), curves_path.resolve(), image_path.resolve()}:
         parser.error("输出不能覆盖输入预测文件")
     frame = pd.read_csv(source)
     report, curves = evaluate_workload(frame, args.target_recall, args.bootstrap, args.seed)
     report.update(split=split, purpose="development_only" if split == "validation" else "final_evaluation",
                   source_file=str(source), source_sha256=hashlib.sha256(source.read_bytes()).hexdigest())
+    if context:
+        report.update(provenance=context, purpose="saved_prediction_reanalysis")
+        metrics = json.loads(Path(args.metrics).read_text(encoding="utf-8"))
+        for scope, result in (("future", report), ("all", report["supplementary_all"])):
+            expected = metrics["tiers"][scope]
+            if result["events"] != expected["events"] or result["positive_events"] != expected["critical"]["positive_events"]:
+                raise ValueError("Saved metrics cohort does not match predictions")
+            if args.target_recall == 0.9:
+                for method in ("baseline", "model"):
+                    if result[method]["reviews"] != expected["critical"]["review_for_90_recall"][method]:
+                        raise ValueError("Saved metrics review count does not match predictions")
     output.parent.mkdir(parents=True, exist_ok=True)
     save_curve(report, curves, image_path)
     curves.to_csv(curves_path, index=False)

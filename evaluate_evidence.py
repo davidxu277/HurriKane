@@ -11,6 +11,7 @@ import pandas as pd
 from ml import build_samples
 from rules import apply_risk_rules
 from validation import validate_input
+from analysis_provenance import saved_prediction_context
 
 
 def sha256(path):
@@ -85,20 +86,39 @@ def main():
     parser.add_argument("--train", default="Data_raw/train_data.csv")
     parser.add_argument("--test", default="Data_raw/test_data.csv")
     parser.add_argument("--output", default="reports/evidence_holdout.json")
+    parser.add_argument("--predictions", default="reports/holdout_second_look/holdout_predictions.csv")
+    parser.add_argument("--metrics", default="reports/holdout_second_look/holdout_metrics.json")
+    parser.add_argument("--models", default="models")
+    parser.add_argument("--split", default="reports/split_events.json")
+    parser.add_argument("--workload", default="reports/workload_holdout.json")
+    parser.add_argument("--test-predictions", default="reports/test_predictions.csv")
+    parser.add_argument("--holdout-look-count", type=int, default=3)
+    parser.add_argument("--source-commit", default="1d52485")
     args = parser.parse_args()
-    frozen = ["models/metadata.json", "models/estimate.cbm", "models/conservative.cbm",
-              "models/classifier.cbm", "reports/split_events.json", "reports/holdout_metrics.json",
-              "reports/holdout_predictions.csv", "reports/test_predictions.csv",
+    metadata_path = Path(args.models) / "metadata.json"
+    frozen = [str(metadata_path), *(str(Path(args.models) / name) for name in
+              ("estimate.cbm", "conservative.cbm", "classifier.cbm")), args.split, args.metrics,
+              args.predictions, args.test_predictions, args.workload,
               "ml.py", "train.py", "rules.py", "validation.py", "service.py", "evaluate_workload.py",
-              "evaluate_evidence.py"]
+              "evaluate_evidence.py", "analysis_provenance.py"]
+    out = Path(args.output)
+    outputs = [out, out.with_name(out.stem + "_events.csv"), out.with_name("evidence_test_events.csv")]
+    inputs = {Path(name).resolve() for name in frozen + [args.train, args.test]}
+    if any(path.resolve() in inputs for path in outputs):
+        parser.error("审计输出不能覆盖输入、模型或切分文件")
     before = {name: sha256(name) for name in frozen}
-    metadata = json.loads(Path("models/metadata.json").read_text(encoding="utf-8"))
-    split = json.loads(Path("reports/split_events.json").read_text(encoding="utf-8"))
+    context = saved_prediction_context(args.metrics, metadata_path, args.holdout_look_count, args.source_commit)
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metrics = json.loads(Path(args.metrics).read_text(encoding="utf-8"))
+    workload = json.loads(Path(args.workload).read_text(encoding="utf-8"))
+    assert workload["source_sha256"] == sha256(args.predictions), "Workload uses different predictions"
+    assert workload.get("provenance") == context, "Workload provenance does not match evidence inputs"
+    split = json.loads(Path(args.split).read_text(encoding="utf-8"))
     sets = {name: set(ids) for name, ids in split.items()}
     assert all(len(ids) == len(sets[name]) for name, ids in split.items())
     assert not (sets["train"] & sets["validation"] or sets["train"] & sets["holdout"]
                 or sets["validation"] & sets["holdout"])
-    predictions = pd.read_csv("reports/holdout_predictions.csv")
+    predictions = pd.read_csv(args.predictions)
     assert predictions.event_id.is_unique and set(predictions.event_id) == sets["holdout"]
     raw = pd.read_csv(args.train, low_memory=False)
     valid, issues = validate_input(raw, metadata)
@@ -107,6 +127,8 @@ def main():
     aligned = samples.set_index("event_id").loc[predictions.event_id]
     assert np.array_equal(aligned.has_future.to_numpy(), predictions.has_future.to_numpy())
     assert np.array_equal(aligned.final_tier.to_numpy(), predictions.final_tier.to_numpy())
+    assert np.array_equal(aligned.current_tier.to_numpy(), predictions.current_tier.to_numpy())
+    assert np.allclose(aligned.y.to_numpy(), predictions.y_true.to_numpy())
     assert np.allclose(aligned.known_log10_pc.to_numpy(), predictions.tier_log10_pc.to_numpy())
     assert np.allclose(aligned.miss_distance.to_numpy(), predictions.miss_distance_m.to_numpy(), equal_nan=True)
     assert np.allclose(aligned.sigma_ratio.to_numpy(), predictions.sigma_ratio.to_numpy(), equal_nan=True)
@@ -127,8 +149,6 @@ def main():
     original = quantile(train.y.lt(-6))
     latest = quantile(train.known_log10_pc.lt(-6))
     assert np.isclose(original["q90"], threshold, rtol=1e-12, atol=0)
-    workload = json.loads(Path("reports/workload_holdout.json").read_text(encoding="utf-8"))
-    metrics = json.loads(Path("reports/holdout_metrics.json").read_text(encoding="utf-8"))
     for scope, result in (("future", workload), ("all", workload["supplementary_all"])):
         expected = metrics["tiers"][scope]
         assert result["events"] == expected["events"]
@@ -136,7 +156,9 @@ def main():
         for method in ("baseline", "model"):
             assert result[method]["reviews"] == expected["critical"]["review_for_90_recall"][method]
     report = {
-        "model_version": metadata["model_version"], "variant": metadata["variant"],
+        "model_version": metrics["model_version"], "variant": metrics["variant"],
+        "provenance": context, "source_file": args.predictions,
+        "source_sha256": sha256(args.predictions),
         "scope": "future", "role": "primary", "rule_threshold": threshold,
         "rule": "latest Pc < 1e-6 AND sigma_ratio > frozen training threshold => NEEDS_REVIEW; missing ratio also requires review",
         "counts": counts(scored[scored.has_future]),
@@ -152,14 +174,12 @@ def main():
         "checks": {"split_disjoint": True, "holdout_ids_exact_match": True,
                    "saved_labels_and_input_pc_match": True, "insufficient_evidence_flagged": True,
                    "missing_sigma_flagged": True, "risk_grade_preserved": True,
-                   "workload_matches_main_metrics": True},
+                   "workload_matches_saved_metrics": True},
         "boundary_checks": boundary_checks(threshold),
         "method": "Reuse saved predictions; attach selected input sigmas and propagate eligible historical-message warnings as in service.py. No model prediction call or training.",
     }
-    out = Path(args.output)
-    scored.to_csv(out.with_name(out.stem + "_events.csv"), index=False)
     # The unlabeled test cohort is supplementary operational evidence, not accuracy evaluation.
-    test_predictions = pd.read_csv("reports/test_predictions.csv")
+    test_predictions = pd.read_csv(args.test_predictions)
     test_raw = pd.read_csv(args.test, low_memory=False)
     test_valid, test_issues = validate_input(test_raw, metadata)
     assert not test_issues.severity.eq("ERROR").any()
@@ -167,9 +187,10 @@ def main():
     assert test_predictions.event_id.is_unique and set(test_predictions.event_id) == set(test_samples.event_id)
     test_eligible = test_valid.index[test_valid.time_to_tca.ge(metadata["horizon_days"])]
     test_pure, test_scored = score_with_warnings(test_predictions, test_samples, test_issues, test_eligible, threshold)
-    test_scored.to_csv(out.with_name("evidence_test_events.csv"), index=False)
     report["supplementary_unlabeled_test"] = {
         "counts": counts(test_scored), "rules_only_counts": counts(test_pure),
+        "source_file": args.test_predictions, "source_sha256": sha256(args.test_predictions),
+        "model_version_binding": "Not independently verified; no test inference was performed",
         "note": "Existing test predictions; no accuracy or recall claim. Historical input warnings are included.",
     }
     after = {name: sha256(name) for name in frozen}
@@ -177,6 +198,9 @@ def main():
     report["checks"]["frozen_files_unchanged"] = True
     report["frozen_sha256"] = before
     report["raw_sha256"] = {args.train: sha256(args.train), args.test: sha256(args.test)}
+    out.parent.mkdir(parents=True, exist_ok=True)
+    scored.to_csv(out.with_name(out.stem + "_events.csv"), index=False)
+    test_scored.to_csv(out.with_name("evidence_test_events.csv"), index=False)
     out.write_text(json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")
     print(json.dumps({"primary": report["counts"], "all": report["supplementary_all"]["counts"],
                       "test": report["supplementary_unlabeled_test"]["counts"],

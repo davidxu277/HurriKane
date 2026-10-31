@@ -1,84 +1,105 @@
 {
-  "model_version": "20261031-054344",
-  "variant": "D_stale",
+  "model_version": "20261031-063722",
+  "variant": "E",
+  "provenance": {
+    "source_commit": "1d52485",
+    "variant": "E",
+    "prediction_model_version": "20261031-063722",
+    "current_bundle_model_version": "20261031-064613",
+    "model_version_matches_current_bundle": false,
+    "prediction_source_look": "second",
+    "holdout_look_count": 3,
+    "operation": "reanalysis_of_saved_predictions_only",
+    "new_training_or_inference": false,
+    "metrics_file": "reports\\holdout_second_look\\holdout_metrics.json",
+    "metrics_sha256": "21c35eaccd6fb2eb6446abcf5ffc4761f7410417465b77dae74918ab04301dcb",
+    "metadata_file": "models\\metadata.json",
+    "metadata_sha256": "5b54ff9c5d11d860eef57c4acf8d27bf2a618b87b4ceed2b46810ba30c71b5fe",
+    "warnings": [
+      "留出集共看了 3 次；多次查看后的结果可能偏乐观，不是未见数据上的独立验证。",
+      "保存预测的 model_version 与当前模型 metadata 不同；只分析指定预测，不重新推理，不宣称已证明当前模型二进制与该预测一致。"
+    ]
+  },
+  "source_file": "reports/holdout_second_look/holdout_predictions.csv",
+  "source_sha256": "42aeba6b2628f2bc3b54bb9c171954212ddde8fc51e6bcd3ed5fd273169f462b",
   "scope": "future",
   "role": "primary",
   "rule_threshold": 0.10816974945035213,
   "rule": "latest Pc < 1e-6 AND sigma_ratio > frozen training threshold => NEEDS_REVIEW; missing ratio also requires review",
   "counts": {
     "events": 1335,
-    "needs_review_events": 159,
-    "needs_review_fraction": 0.11910112359550562,
+    "needs_review_events": 157,
+    "needs_review_fraction": 0.11760299625468165,
     "risk_level_counts": {
       "SAFE": 980,
       "ELEVATED": 265,
       "CRITICAL": 90
     },
-    "safe_needs_review_events": 87,
+    "safe_needs_review_events": 85,
     "low_latest_pc_events": 1287,
     "missing_sigma_events": 0,
     "reason_counts_nonexclusive": {
       "large_sigma_low_pc": 129,
       "missing_sigma": 0,
-      "conservative_grade_crossing": 2,
+      "conservative_grade_crossing": 0,
       "upstream_warning": 40
     }
   },
   "rules_only_counts": {
     "events": 1335,
-    "needs_review_events": 131,
-    "needs_review_fraction": 0.09812734082397004,
+    "needs_review_events": 129,
+    "needs_review_fraction": 0.09662921348314607,
     "risk_level_counts": {
       "SAFE": 980,
       "ELEVATED": 265,
       "CRITICAL": 90
     },
-    "safe_needs_review_events": 69,
+    "safe_needs_review_events": 67,
     "low_latest_pc_events": 1287,
     "missing_sigma_events": 0,
     "reason_counts_nonexclusive": {
       "large_sigma_low_pc": 129,
       "missing_sigma": 0,
-      "conservative_grade_crossing": 2,
+      "conservative_grade_crossing": 0,
       "upstream_warning": 0
     }
   },
   "supplementary_all": {
     "counts": {
       "events": 1792,
-      "needs_review_events": 267,
-      "needs_review_fraction": 0.14899553571428573,
+      "needs_review_events": 265,
+      "needs_review_fraction": 0.14787946428571427,
       "risk_level_counts": {
         "SAFE": 1330,
         "ELEVATED": 336,
         "CRITICAL": 126
       },
-      "safe_needs_review_events": 158,
+      "safe_needs_review_events": 156,
       "low_latest_pc_events": 1702,
       "missing_sigma_events": 0,
       "reason_counts_nonexclusive": {
         "large_sigma_low_pc": 222,
         "missing_sigma": 0,
-        "conservative_grade_crossing": 3,
+        "conservative_grade_crossing": 1,
         "upstream_warning": 64
       }
     },
     "rules_only_counts": {
       "events": 1792,
-      "needs_review_events": 225,
-      "needs_review_fraction": 0.12555803571428573,
+      "needs_review_events": 223,
+      "needs_review_fraction": 0.12444196428571429,
       "risk_level_counts": {
         "SAFE": 1330,
         "ELEVATED": 336,
         "CRITICAL": 126
       },
-      "safe_needs_review_events": 129,
+      "safe_needs_review_events": 127,
       "low_latest_pc_events": 1702,
       "missing_sigma_events": 0,
       "reason_counts_nonexclusive": {
         "large_sigma_low_pc": 222,
         "missing_sigma": 0,
-        "conservative_grade_crossing": 3,
+        "conservative_grade_crossing": 1,
         "upstream_warning": 0
       }
     }
@@ -105,7 +126,7 @@
     "insufficient_evidence_flagged": true,
     "missing_sigma_flagged": true,
     "risk_grade_preserved": true,
-    "workload_matches_main_metrics": true,
+    "workload_matches_saved_metrics": true,
     "frozen_files_unchanged": true
   },
   "boundary_checks": {
@@ -190,27 +211,32 @@
         "upstream_warning": 0
       }
     },
+    "source_file": "reports/test_predictions.csv",
+    "source_sha256": "bde7dce9a8b84d4e30091714944f12a82d3cf4ed68fc54f64d35ceae69a105c0",
+    "model_version_binding": "Not independently verified; no test inference was performed",
     "note": "Existing test predictions; no accuracy or recall claim. Historical input warnings are included."
   },
   "frozen_sha256": {
-    "models/metadata.json": "916441a606dbaa89ce99c71ee7ccc1a3f38910ca65edecad1409d5d37fe06a23",
-    "models/estimate.cbm": "8291c0668215521a32caee0b0c0132ddd5f630df3546bd861bce8133363e6aea",
-    "models/conservative.cbm": "2f7dfc9bc1727804c6bfd8c3a6778a1a41d855fa82e6322e2f2b99a451087dc4",
-    "models/classifier.cbm": "1aa25d82ad0be9be9d1710677095b59ea3935634e218eb3b9933e5d9fe9d92b4",
+    "models\\metadata.json": "5b54ff9c5d11d860eef57c4acf8d27bf2a618b87b4ceed2b46810ba30c71b5fe",
+    "models\\estimate.cbm": "5385c9a9bd48f54d898c30a421e9ae0b4799f62abcfd63225595e991732233e7",
+    "models\\conservative.cbm": "f3bf727b7d167c30ec76af6792a8fb0a001872ac87044af499541f6708d0861a",
+    "models\\classifier.cbm": "942ee90c56a0671367a1a3a29e67d5b09f766a113609853970b5c1dadb0d48a8",
     "reports/split_events.json": "aa5960708549cc5f088247cc0b6995affdb98915115ca646e5f5972f59fb6698",
-    "reports/holdout_metrics.json": "fab429df5a680a6830d718995f0a6f27a90373d35458ac57637698c8bd64c942",
-    "reports/holdout_predictions.csv": "ddd245daba2f71c7b6dd0fa22e94aa9c665dfc610b5184661c0dfcc2cb374b4c",
-    "reports/test_predictions.csv": "c2b172452f43ebdfd94e3ea0319070ae3f1638c8b4f17cdf221139efc78c8c64",
-    "ml.py": "4564f1cc616b50bbb7b8cdca15704aa4c1e810ee5288854f1152df1c5fed980e",
-    "train.py": "de8c0ec01bde581e810c2d14e31c16355bfbffda6c91fc7f67bc867dfddb0ff8",
+    "reports/holdout_second_look/holdout_metrics.json": "21c35eaccd6fb2eb6446abcf5ffc4761f7410417465b77dae74918ab04301dcb",
+    "reports/holdout_second_look/holdout_predictions.csv": "42aeba6b2628f2bc3b54bb9c171954212ddde8fc51e6bcd3ed5fd273169f462b",
+    "reports/test_predictions.csv": "bde7dce9a8b84d4e30091714944f12a82d3cf4ed68fc54f64d35ceae69a105c0",
+    "reports/workload_holdout.json": "56465851fca555b47eac25703d274933c9d564c1be6ac704bdc0eb67f62f8bd5",
+    "ml.py": "1a49956b2757d02a5b6b3ff8cec089b88a6f621bb22095ef6b741ec111c7c309",
+    "train.py": "e0af23af0493ed8b0b6ae477f5c677f1d01ce3efeedce647c51727c3943b5624",
     "rules.py": "4a664acbd03fca4efbc17cd808e892921da5cd90735e6200c23e1f29a11c9e4a",
-    "validation.py": "ea9c79debdf9d89af2da0b89b5c7bfce5669cd474022aad5ee94b03bb5ab75d8",
+    "validation.py": "0b2f9e95506aee20d4e722b5a2c571a2e9c27bd76501845759f2bc5ea1fefe51",
     "service.py": "a731ee098c23c4a143b0466c3647a39e12623279d1377dac56708834468863d7",
-    "evaluate_workload.py": "0863bd734e892de4a8c74e2b0e9e51a6bd0462e600bbcf3debc6abd762424ddf",
-    "evaluate_evidence.py": "f189beebb63f9971af338750fe64132aa4d55ada0bab16ff7ed92cff245078cf"
+    "evaluate_workload.py": "cbe1d11bd3e4bce3862c00d26963cd3a25e66dac218fce4d10c57316aac6c3e0",
+    "evaluate_evidence.py": "d4c5ef62d025222399a550d56e907583e8b4478834182312d000c8b793ef2ee9",
+    "analysis_provenance.py": "1aa8fe44cb4bd1142cd88986d0db8473a719e9a0171312a0ebf95e8f0f5880b9"
   },
   "raw_sha256": {
-    "Data_raw/train_data.csv": "ba47ce80580d5d6ff523ddc1d724901dbdfb3a5afdc5e755f0ca2bcefe6e4eb6",
-    "Data_raw/test_data.csv": "fc4110e979e7d569cb8aa819d450d29311e799115b2fe5b519b8a18eafa37323"
+    "D:/Autonomous-SG-2026/Data_raw/train_data.csv": "ba47ce80580d5d6ff523ddc1d724901dbdfb3a5afdc5e755f0ca2bcefe6e4eb6",
+    "D:/Autonomous-SG-2026/Data_raw/test_data.csv": "fc4110e979e7d569cb8aa819d450d29311e799115b2fe5b519b8a18eafa37323"
   }
 }

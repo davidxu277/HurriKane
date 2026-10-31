@@ -2,7 +2,7 @@
 
 Three-person, six-hour implementation plan for **Autonomous SG 2026 · Airbus Challenge #1**.
 
-> Current submission workflow: [首版提交与候选模型复核](reports/submission_plan.md). First submission keeps the existing main model; candidate replacement waits for the explicitly labeled second holdout inspection. The plan below is historical.
+> **当前最终版本：E，main `1d52485`。** 模型和切分已冻结，不再评估留出集。留出集共看了 **3 次**，见 [最终模型记录](reports/final_model_summary.md)。当前 [复核量与证据报告](reports/holdout_review_submission.md) 复用 E 的第二次保存预测，已替换旧 D_stale 汇总；[材料交接说明](reports/submission_plan.md) 供负责提交的队友使用。下面为历史开发计划，不应再按其中训练或留出评估步骤操作。
 
 Updated: 31 October 2026. Adapted from the team's latest Chinese planning document.
 
