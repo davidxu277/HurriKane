@@ -1,4 +1,4 @@
-# Hackers — Satellite Collision Risk Assessment
+# HurriKane — Satellite Collision Risk Assessment
 
 Three-person, six-hour implementation plan for **Autonomous SG 2026 · Airbus Challenge #1**.
 
