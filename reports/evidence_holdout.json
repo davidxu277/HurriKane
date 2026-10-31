@@ -1,0 +1,216 @@
+{
+  "model_version": "20261031-054344",
+  "variant": "D_stale",
+  "scope": "future",
+  "role": "primary",
+  "rule_threshold": 0.10816974945035213,
+  "rule": "latest Pc < 1e-6 AND sigma_ratio > frozen training threshold => NEEDS_REVIEW; missing ratio also requires review",
+  "counts": {
+    "events": 1335,
+    "needs_review_events": 159,
+    "needs_review_fraction": 0.11910112359550562,
+    "risk_level_counts": {
+      "SAFE": 980,
+      "ELEVATED": 265,
+      "CRITICAL": 90
+    },
+    "safe_needs_review_events": 87,
+    "low_latest_pc_events": 1287,
+    "missing_sigma_events": 0,
+    "reason_counts_nonexclusive": {
+      "large_sigma_low_pc": 129,
+      "missing_sigma": 0,
+      "conservative_grade_crossing": 2,
+      "upstream_warning": 40
+    }
+  },
+  "rules_only_counts": {
+    "events": 1335,
+    "needs_review_events": 131,
+    "needs_review_fraction": 0.09812734082397004,
+    "risk_level_counts": {
+      "SAFE": 980,
+      "ELEVATED": 265,
+      "CRITICAL": 90
+    },
+    "safe_needs_review_events": 69,
+    "low_latest_pc_events": 1287,
+    "missing_sigma_events": 0,
+    "reason_counts_nonexclusive": {
+      "large_sigma_low_pc": 129,
+      "missing_sigma": 0,
+      "conservative_grade_crossing": 2,
+      "upstream_warning": 0
+    }
+  },
+  "supplementary_all": {
+    "counts": {
+      "events": 1792,
+      "needs_review_events": 267,
+      "needs_review_fraction": 0.14899553571428573,
+      "risk_level_counts": {
+        "SAFE": 1330,
+        "ELEVATED": 336,
+        "CRITICAL": 126
+      },
+      "safe_needs_review_events": 158,
+      "low_latest_pc_events": 1702,
+      "missing_sigma_events": 0,
+      "reason_counts_nonexclusive": {
+        "large_sigma_low_pc": 222,
+        "missing_sigma": 0,
+        "conservative_grade_crossing": 3,
+        "upstream_warning": 64
+      }
+    },
+    "rules_only_counts": {
+      "events": 1792,
+      "needs_review_events": 225,
+      "needs_review_fraction": 0.12555803571428573,
+      "risk_level_counts": {
+        "SAFE": 1330,
+        "ELEVATED": 336,
+        "CRITICAL": 126
+      },
+      "safe_needs_review_events": 129,
+      "low_latest_pc_events": 1702,
+      "missing_sigma_events": 0,
+      "reason_counts_nonexclusive": {
+        "large_sigma_low_pc": 222,
+        "missing_sigma": 0,
+        "conservative_grade_crossing": 3,
+        "upstream_warning": 0
+      }
+    }
+  },
+  "threshold_provenance": {
+    "source": "fixed training events with has_future=True; 90th percentile, finite sigma ratios",
+    "training_events": 6224,
+    "stored_threshold": 0.10816974945035213,
+    "actual_training_filter": "final y < -6",
+    "reproduced": {
+      "events_with_finite_ratio": 6160,
+      "q90": 0.10816974945035213
+    },
+    "plan_filter_latest_known_pc": {
+      "events_with_finite_ratio": 5998,
+      "q90": 0.09865259095238627
+    },
+    "finding": "train.py filters by final y; runtime filters by latest known Pc. This differs from the plan's latest-Pc wording. The stored threshold is retained; no training, model or rule change."
+  },
+  "checks": {
+    "split_disjoint": true,
+    "holdout_ids_exact_match": true,
+    "saved_labels_and_input_pc_match": true,
+    "insufficient_evidence_flagged": true,
+    "missing_sigma_flagged": true,
+    "risk_grade_preserved": true,
+    "workload_matches_main_metrics": true,
+    "frozen_files_unchanged": true
+  },
+  "boundary_checks": {
+    "ratio_equal_threshold": {
+      "risk_level": "SAFE",
+      "data_quality_status": "OK",
+      "passed": true
+    },
+    "ratio_above_threshold": {
+      "risk_level": "SAFE",
+      "data_quality_status": "NEEDS_REVIEW",
+      "passed": true
+    },
+    "pc_equal_1e-6": {
+      "risk_level": "ELEVATED",
+      "data_quality_status": "OK",
+      "passed": true
+    },
+    "missing_sigma": {
+      "risk_level": "SAFE",
+      "data_quality_status": "NEEDS_REVIEW",
+      "passed": true
+    },
+    "missing_pc": {
+      "risk_level": "UNKNOWN",
+      "data_quality_status": "NEEDS_REVIEW",
+      "passed": true
+    },
+    "missing_distance": {
+      "risk_level": "UNKNOWN",
+      "data_quality_status": "NEEDS_REVIEW",
+      "passed": true
+    },
+    "zero_distance": {
+      "risk_level": "CRITICAL",
+      "data_quality_status": "NEEDS_REVIEW",
+      "passed": true
+    },
+    "conservative_crossing": {
+      "risk_level": "SAFE",
+      "data_quality_status": "NEEDS_REVIEW",
+      "passed": true
+    }
+  },
+  "method": "Reuse saved predictions; attach selected input sigmas and propagate eligible historical-message warnings as in service.py. No model prediction call or training.",
+  "supplementary_unlabeled_test": {
+    "counts": {
+      "events": 2167,
+      "needs_review_events": 256,
+      "needs_review_fraction": 0.11813567143516382,
+      "risk_level_counts": {
+        "SAFE": 1481,
+        "ELEVATED": 500,
+        "CRITICAL": 186
+      },
+      "safe_needs_review_events": 133,
+      "low_latest_pc_events": 1989,
+      "missing_sigma_events": 0,
+      "reason_counts_nonexclusive": {
+        "large_sigma_low_pc": 162,
+        "missing_sigma": 0,
+        "conservative_grade_crossing": 0,
+        "upstream_warning": 107
+      }
+    },
+    "rules_only_counts": {
+      "events": 2167,
+      "needs_review_events": 162,
+      "needs_review_fraction": 0.0747577295800646,
+      "risk_level_counts": {
+        "SAFE": 1481,
+        "ELEVATED": 500,
+        "CRITICAL": 186
+      },
+      "safe_needs_review_events": 74,
+      "low_latest_pc_events": 1989,
+      "missing_sigma_events": 0,
+      "reason_counts_nonexclusive": {
+        "large_sigma_low_pc": 162,
+        "missing_sigma": 0,
+        "conservative_grade_crossing": 0,
+        "upstream_warning": 0
+      }
+    },
+    "note": "Existing test predictions; no accuracy or recall claim. Historical input warnings are included."
+  },
+  "frozen_sha256": {
+    "models/metadata.json": "916441a606dbaa89ce99c71ee7ccc1a3f38910ca65edecad1409d5d37fe06a23",
+    "models/estimate.cbm": "8291c0668215521a32caee0b0c0132ddd5f630df3546bd861bce8133363e6aea",
+    "models/conservative.cbm": "2f7dfc9bc1727804c6bfd8c3a6778a1a41d855fa82e6322e2f2b99a451087dc4",
+    "models/classifier.cbm": "1aa25d82ad0be9be9d1710677095b59ea3935634e218eb3b9933e5d9fe9d92b4",
+    "reports/split_events.json": "aa5960708549cc5f088247cc0b6995affdb98915115ca646e5f5972f59fb6698",
+    "reports/holdout_metrics.json": "fab429df5a680a6830d718995f0a6f27a90373d35458ac57637698c8bd64c942",
+    "reports/holdout_predictions.csv": "ddd245daba2f71c7b6dd0fa22e94aa9c665dfc610b5184661c0dfcc2cb374b4c",
+    "reports/test_predictions.csv": "c2b172452f43ebdfd94e3ea0319070ae3f1638c8b4f17cdf221139efc78c8c64",
+    "ml.py": "4564f1cc616b50bbb7b8cdca15704aa4c1e810ee5288854f1152df1c5fed980e",
+    "train.py": "de8c0ec01bde581e810c2d14e31c16355bfbffda6c91fc7f67bc867dfddb0ff8",
+    "rules.py": "4a664acbd03fca4efbc17cd808e892921da5cd90735e6200c23e1f29a11c9e4a",
+    "validation.py": "ea9c79debdf9d89af2da0b89b5c7bfce5669cd474022aad5ee94b03bb5ab75d8",
+    "service.py": "a731ee098c23c4a143b0466c3647a39e12623279d1377dac56708834468863d7",
+    "evaluate_workload.py": "0863bd734e892de4a8c74e2b0e9e51a6bd0462e600bbcf3debc6abd762424ddf",
+    "evaluate_evidence.py": "f189beebb63f9971af338750fe64132aa4d55ada0bab16ff7ed92cff245078cf"
+  },
+  "raw_sha256": {
+    "Data_raw/train_data.csv": "ba47ce80580d5d6ff523ddc1d724901dbdfb3a5afdc5e755f0ca2bcefe6e4eb6",
+    "Data_raw/test_data.csv": "fc4110e979e7d569cb8aa819d450d29311e799115b2fe5b519b8a18eafa37323"
+  }
+}
