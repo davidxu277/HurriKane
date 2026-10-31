@@ -2,6 +2,8 @@
 
 Three-person, six-hour implementation plan for **Autonomous SG 2026 · Airbus Challenge #1**.
 
+> Current submission workflow: [首版提交与候选模型复核](reports/submission_plan.md). First submission keeps the existing main model; candidate replacement waits for the explicitly labeled second holdout inspection. The plan below is historical.
+
 Updated: 31 October 2026. Adapted from the team's latest Chinese planning document.
 
 > **Status:** This is an implementation plan, not a record of completed work. Dataset assumptions must be checked against this year's data and organizer instructions. All results remain `[TO BE MEASURED]` until evaluated. A has claimed the ML role; B and C still need named owners.
