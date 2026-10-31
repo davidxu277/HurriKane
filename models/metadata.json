@@ -39,6 +39,7 @@
     "Critical": 0.7927710843373494
   },
   "critical_threshold": 0.6489874176463691,
+  "stale_days": null,
   "split_seed": 42,
   "alpha": 0.9,
   "selection_level": -6.0,
@@ -50,5 +51,5 @@
     "holdout": 1792
   },
   "training_events": 6224,
-  "model_version": "20261031-051704"
+  "model_version": "20261031-053646"
 }

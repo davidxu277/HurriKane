@@ -15,30 +15,34 @@ from catboost import CatBoostClassifier, CatBoostRegressor, Pool
 from sklearn.model_selection import train_test_split
 
 from ml import (
-    CATEGORICAL_FEATURES, TIERS, alert_scores, build_samples, combine_predictions, feature_columns,
-    guard_conservative, load_bundle, predict_batch, tier_probabilities,
+    CATEGORICAL_FEATURES, TIERS, alert_scores, apply_stale_rule, build_samples, combine_predictions,
+    feature_columns, guard_conservative, load_bundle, predict_batch, predicted_tiers, tier_probabilities,
 )
+from validation import validate_input
 
 ALPHAS = (0.8, 0.9, 0.95)
 DEFAULT_ALPHA = 0.9
 MIN_ALPHA_GAIN = 2           # 至少多抓这么多事件才换 alpha，否则视为样本波动
-MIN_VARIANT_GAIN = 2         # 比较方案时同样的门槛
 HIGH_RISK_LEVELS = (-4.0, -6.0)
 SELECTION_LEVEL = -6.0
 TARGET_FLOOR = -10.0         # 低于这个值都属于 Safe，差别没有操作意义
 MIN_STRATIFY_EVENTS = 10
 MIN_LEVEL_POSITIVES = 20
 REVIEW_RECALL = 0.9
+STALE_DAYS = 3.0            # 最新消息早于这个时间，就直接沿用当前等级
 SEED = 42
 TASK = 'final'
 
-# 名称：(历史特征, 当前等级兜底, 训练时包含没有后续消息的事件)，按从简单到复杂排列
+# 名称：(历史特征, 当前等级兜底, 训练时包含没有后续消息的事件, 时间规则)，按从简单到复杂排列
 VARIANTS = {
-    'B': (False, False, False),
-    'C': (False, True, False),
-    'D': (True, True, False),
-    'D_all_events': (True, True, True),
+    'B': (False, False, False, False),
+    'C': (False, True, False, False),
+    'D': (True, True, False, False),
+    'D_all_events': (True, True, True, False),
+    'D_stale': (True, True, False, True),
+    'D_all_events_stale': (True, True, True, True),
 }
+SELECTION_MEASURES = ('critical_true_positives', 'accuracy_future', 'accuracy_all')
 
 PREDICTION_COLUMNS = [
     'event_id', 'y_true', 'final_tier', 'has_future', 'current_tier', 'predicted_final_tier',
@@ -106,11 +110,11 @@ def choose_alpha(true_positives_by_alpha, default=DEFAULT_ALPHA, min_gain=MIN_AL
     return default
 
 
-def choose_variant(true_positives_by_variant, min_gain=MIN_VARIANT_GAIN):
-    """按从简单到复杂比较，只有多抓足够多的事件才换更复杂的方案。"""
-    chosen = next(iter(true_positives_by_variant))
-    for name, true_positives in true_positives_by_variant.items():
-        if true_positives - true_positives_by_variant[chosen] >= min_gain:
+def choose_variant(results):
+    """按从简单到复杂比较，三项成绩都不差于当前方案才替换。"""
+    chosen = next(iter(results))
+    for name, result in results.items():
+        if all(result[measure] >= results[chosen][measure] for measure in SELECTION_MEASURES):
             chosen = name
     return chosen
 
@@ -250,26 +254,42 @@ def fit_classifier(train, validation, features, iterations):
 
 
 def compare_variants(train_all, train, validation, rates, iterations):
-    """在有后续消息的验证事件上比较各方案，并和当前等级基线同误报率比较。"""
-    positive = validation['final_tier'].eq('Critical').to_numpy()
-    baseline_alert = validation['current_tier'].eq('Critical').to_numpy()
+    """在验证集上比较各方案，误报率和当前等级基线对齐，主要看有后续消息的事件。"""
+    future = validation['has_future'].to_numpy()
+    final = validation['final_tier'].to_numpy()
+    current = validation['current_tier'].to_numpy()
+    positive = final[future] == 'Critical'
+    baseline_alert = current[future] == 'Critical'
     baseline_fpr = float((baseline_alert & ~positive).sum() / max((~positive).sum(), 1))
-    report = {'baseline': {**recall_at_fpr(positive, validation['baseline_score'], baseline_fpr),
-                           'review_for_90_recall': review_count(positive, validation['baseline_score'])}}
+
+    def summary(scores, predicted):
+        return {
+            **recall_at_fpr(positive, scores, baseline_fpr),
+            'review_for_90_recall': review_count(positive, scores),
+            'critical_true_positives': int((predicted[future][positive] == 'Critical').sum()),
+            'critical_false_positives': int((predicted[future][~positive] == 'Critical').sum()),
+            'accuracy_future': float((predicted[future] == final[future]).mean()),
+            'accuracy_all': float((predicted == final).mean()),
+        }
+
     fitted, results = {}, {}
-    for name, (history, fallback, all_events) in VARIANTS.items():
+    for name, (history, fallback, all_events, stale) in VARIANTS.items():
         features = feature_columns(TASK, history=history)
         if (history, all_events) not in fitted:
             fitted[(history, all_events)] = fit_classifier(
-                train_all if all_events else train, validation, features, iterations
+                train_all if all_events else train, validation[future], features, iterations
             )
         probabilities = tier_probabilities(fitted[(history, all_events)], validation[features])
         scores = alert_scores(probabilities['Critical'], validation['current_tier'], rates if fallback else None)
-        results[name] = {**recall_at_fpr(positive, scores, baseline_fpr),
-                         'review_for_90_recall': review_count(positive, scores)}
-    chosen = choose_variant({name: result['true_positives'] for name, result in results.items()})
-    history, _, all_events = VARIANTS[chosen]
-    return chosen, fitted[(history, all_events)], {'baseline': report['baseline'], **results}
+        threshold = recall_at_fpr(positive, scores[future], baseline_fpr)['threshold']
+        predicted = apply_stale_rule(predicted_tiers(probabilities, scores, threshold), current,
+                                     validation['time_to_tca'], STALE_DAYS if stale else None)
+        results[name] = summary(scores[future], predicted)
+
+    chosen = choose_variant(results)
+    history, _, all_events, _ = VARIANTS[chosen]
+    baseline = summary(validation['baseline_score'].to_numpy()[future], current)
+    return chosen, fitted[(history, all_events)], {'baseline': baseline, **results}
 
 
 def main():
@@ -288,7 +308,13 @@ def main():
     reports_dir.mkdir(exist_ok=True)
 
     raw = pd.read_csv(args.train, low_memory=False)
-    samples = build_samples(raw, TASK, args.horizon_days)
+    checks = {'task': TASK, 'features': feature_columns(TASK, history=True),
+              'categorical_features': CATEGORICAL_FEATURES}
+    valid, issues = validate_input(raw, checks)
+    issues.to_csv(reports_dir / 'train_input_issues.csv', index=False, encoding='utf-8-sig')
+    if issues['severity'].eq('ERROR').any():
+        raise ValueError('训练输入存在 ERROR，请先检查 train_input_issues.csv')
+    samples = build_samples(valid, TASK, args.horizon_days)
     print(f'原始 {len(raw)} 行、{raw["event_id"].nunique()} 个事件 -> 样本 {len(samples)} 个，'
           f'其中有后续消息 {int(samples["has_future"].sum())} 个')
 
@@ -299,8 +325,11 @@ def main():
     validation = parts['validation'][parts['validation']['has_future']]
 
     rates = critical_rates(train)
-    variant, classifier, variant_report = compare_variants(train_all, train, validation, rates, args.iterations)
-    history, fallback, _ = VARIANTS[variant]
+    variant, classifier, variant_report = compare_variants(
+        train_all, train, parts['validation'], rates, args.iterations
+    )
+    history, fallback, _, stale = VARIANTS[variant]
+    stale_days = STALE_DAYS if stale else None
     features = feature_columns(TASK, history=history)
     used_rates = rates if fallback else None
     print(f'选定方案 {variant}')
@@ -345,6 +374,7 @@ def main():
         'target_floor': TARGET_FLOOR,
         'critical_rates': used_rates,
         'critical_threshold': variant_report[variant]['threshold'],
+        'stale_days': stale_days,
         'split_seed': SEED,
         'alpha': alpha,
         'selection_level': float(level),
@@ -369,6 +399,7 @@ def main():
             tier_probabilities(classifier, part[features]),
             used_rates,
             metadata['critical_threshold'],
+            stale_days,
         )
         result['y_true'] = part['y'].to_numpy()
         result['final_tier'] = part['final_tier'].to_numpy()

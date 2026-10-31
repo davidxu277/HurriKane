@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 
 from ml import (
-    TIERS, alert_scores, build_samples, combine_predictions, feature_columns, predicted_tiers, risk_tier,
+    TIERS, alert_scores, apply_stale_rule, build_samples, combine_predictions, feature_columns, predicted_tiers, risk_tier,
     tier_probabilities,
 )
 
@@ -290,3 +290,25 @@ def test_probabilities_follow_tier_names_not_model_column_order():
     result = tier_probabilities(FakeClassifier(), None)
     assert list(result.columns) == ['Safe', 'Elevated', 'Critical']
     assert result.iloc[0].tolist() == [0.7, 0.2, 0.1]
+
+
+def test_stale_rule_keeps_current_tier_for_old_latest_message():
+    predicted = np.array(['Critical', 'Safe'])
+    current = np.array(['Safe', 'Elevated'])
+    assert apply_stale_rule(predicted, current, np.array([3.0, 3.5]), 3.0).tolist() == ['Safe', 'Elevated']
+
+
+def test_stale_rule_leaves_recent_messages_to_the_model():
+    assert apply_stale_rule(np.array(['Critical']), np.array(['Safe']), np.array([2.99]), 3.0)[0] == 'Critical'
+
+
+def test_stale_rule_is_optional():
+    assert apply_stale_rule(np.array(['Critical']), np.array(['Safe']), np.array([5.0]), None)[0] == 'Critical'
+
+
+def test_combined_output_applies_stale_rule():
+    df = pd.DataFrame([message(1, 3.5, -12.0, 9000.0), message(1, 0.5, -7.0)])
+    samples = build_samples(df, 'final', 2.0)
+    result = combine_predictions(samples, [-5.0], [-4.0], probabilities(0.1, 0.1, 0.8), None, 0.4, 3.0).iloc[0]
+    assert result['current_tier'] == 'Safe'
+    assert result['predicted_final_tier'] == 'Safe'
