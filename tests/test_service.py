@@ -67,7 +67,7 @@ def test_full_chain_uses_known_risk_deduplicates_and_preserves_source_details(mo
     source = messages()
     before = source.copy(deep=True)
     result = analyze(source, models)
-    assert set(result) == {"records", "events", "issues", "summary", "metadata"}
+    assert set(result) == {"records", "events", "history", "issues", "summary", "metadata"}
     assert_frame_equal(source, before)
     assert result["issues"].empty
     events = result["events"].set_index("event_id")
@@ -242,3 +242,96 @@ def test_events_carry_predicted_final_tier_for_the_page(models):
     assert events.loc["b", "predicted_final_tier"] == "Safe"
     assert events.loc["b", "p_critical"] == 0.2
     assert events.loc["b", "p_safe"] == 0.5
+
+
+def test_page_summary_aliases_keep_original_counts_and_coverage_note(models):
+    summary = analyze(messages(), models)["summary"]
+    assert summary["event_count"] == summary["total_events"] == 2
+    for level in service.LEVEL_RANK:
+        assert summary[f"{level.lower()}_count"] == summary[f"{level.lower()}_events"]
+    assert summary["needs_review_count"] == summary["needs_review_events"]
+    assert summary["window_24h_count"] is None
+    assert summary["window_24h_note"] == summary["window_24h"]["coverage_note"]
+
+
+def test_page_24h_count_is_available_when_window_is_observed(models):
+    models[1]["metadata"].update(task="current", features=feature_columns("current"))
+    source = messages().drop(columns="risk")
+    source.loc[11, "time_to_tca"] = 0.5
+    result = analyze(source, models)
+    assert result["summary"]["window_24h_count"] == 1
+    assert result["summary"]["window_24h"]["total_events"] == 1
+
+
+def test_history_contains_real_cutoff_inputs_with_original_positions_and_units(models):
+    source = messages()
+    future = source.iloc[[1]].assign(time_to_tca=0.5, risk=-2)
+    source = pd.concat([source, future])
+    source.index = [7] * len(source)
+    result = analyze(source, models)
+    history = result["history"]
+    assert history.columns.tolist() == service.HISTORY_COLUMNS
+    assert history.row_position.tolist() == [0, 1, 2, 3]
+    assert history.input_record_id.tolist() == [7] * 4
+    assert history.time_to_tca_hours.tolist() == [72, 60, 72, 60]
+    assert history.risk.tolist() == [-8, -7, -8, -5]
+    assert history.miss_distance_m.tolist() == [6000] * 4
+    assert result["metadata"]["history_risk_scale"] == "log10(Pc)"
+    history.loc[0, "risk"] = 0
+    assert source.risk.iloc[0] == -8
+
+
+def test_blocked_event_has_no_stale_history_and_no_eligible_history_is_empty(models):
+    source = messages().astype(object)
+    source.loc[11, "risk"] = "bad"
+    result = analyze(source, models)
+    assert result["history"].event_id.tolist() == ["b", "b"]
+    source["time_to_tca"] = 0.5
+    history = analyze(source, models)["history"]
+    assert history.empty
+    assert history.columns.tolist() == service.HISTORY_COLUMNS
+
+
+@pytest.mark.parametrize("risk", [None, ["-8", "bad", "0.1", "inf"]])
+def test_current_history_does_not_fabricate_risk_when_absent_or_invalid(models, risk):
+    models[1]["metadata"].update(task="current", features=feature_columns("current"))
+    source = messages().drop(columns="risk")
+    if risk is not None:
+        source["risk"] = risk
+    history = analyze(source, models)["history"]
+    assert len(history) == 4
+    if risk is None:
+        assert history.risk.isna().all()
+    else:
+        assert history.risk.iloc[0] == -8
+        assert history.risk.iloc[1:].isna().all()
+
+
+def test_page_issues_preserve_details_and_one_based_position_for_duplicate_indices(models):
+    source = messages()
+    source.index = [7] * len(source)
+    source.iloc[1, source.columns.get_loc("F10")] = np.nan
+    issue = analyze(source, models)["issues"].iloc[0]
+    assert issue.row_number == 2
+    assert issue.row_position == 1 and issue.input_record_id == 7
+    assert issue.field == issue.column == "F10"
+    assert issue.message in issue.problem
+    assert issue.severity in issue.problem and issue.code in issue.problem
+    assert "event_id=a" in issue.problem
+
+
+@pytest.mark.parametrize("kind", ["missing_column", "ambiguous_time", "empty"])
+def test_page_issues_support_file_event_and_empty_input_cases(models, kind):
+    source = messages()
+    if kind == "missing_column":
+        source = source.drop(columns="risk")
+    elif kind == "ambiguous_time":
+        source.loc[10, "time_to_tca"] = 2.5
+    else:
+        source = source.iloc[:0]
+    result = analyze(source, models)
+    assert {"row_number", "field", "problem", *service.ISSUE_COLUMNS} <= set(result["issues"])
+    assert result["issues"].row_number.isna().all()
+    assert result["issues"].problem.notna().all()
+    if kind != "ambiguous_time":
+        assert result["history"].empty

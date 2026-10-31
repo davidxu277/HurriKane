@@ -12,8 +12,12 @@ from rules import LEVEL_RANK, RISK_RULES_VERSION, apply_risk_rules, summarize_ev
 from validation import ISSUE_COLUMNS, validate_input
 
 
-SERVICE_VERSION = "1.0"
+SERVICE_VERSION = "1.1"
 MODEL_FILES = ("metadata.json", "estimate.cbm", "conservative.cbm", "classifier.cbm")
+HISTORY_COLUMNS = [
+    "event_id", "time_to_tca_hours", "risk", "miss_distance_m",
+    "input_record_id", "row_position",
+]
 PREDICTION_COLUMNS = [
     "input_record_id", "row_position", "event_id", "time_to_tca_hours",
     "miss_distance_m", "current_tier", "predicted_final_tier",
@@ -75,6 +79,35 @@ def _reasons(issues):
     return reasons
 
 
+def _history(infer, source_index):
+    """仅返回实际推理输入的历史观测；risk 保留原始 log10(Pc) 量纲。"""
+    if infer.empty:
+        return pd.DataFrame(columns=HISTORY_COLUMNS)
+    positions = infer.index.to_numpy(dtype=int)
+    # current 推理不要求 risk，也不能用模型输出伪造观测历史。
+    risk = pd.to_numeric(infer.reindex(columns=["risk"])["risk"], errors="coerce")
+    risk = risk.where(np.isfinite(risk) & risk.le(0))
+    return pd.DataFrame({
+        "event_id": infer.event_id.to_numpy(),
+        "time_to_tca_hours": infer.time_to_tca.to_numpy() * 24,
+        "risk": risk.to_numpy(),
+        "miss_distance_m": infer.miss_distance.to_numpy(),
+        "input_record_id": list(source_index.take(positions)),
+        "row_position": positions,
+    }, columns=HISTORY_COLUMNS)
+
+
+def _display_issues(issues):
+    """添加当前页面使用的展示字段，保留完整校验字段供下载和排查。"""
+    issues = issues.copy()
+    issues["row_number"] = pd.to_numeric(issues.row_position, errors="coerce").astype("Int64") + 1
+    issues["field"] = issues.column.fillna("")
+    issues["problem"] = issues.severity + " [" + issues.code + "]: " + issues.message
+    for index in issues.index[issues.event_id.notna()]:
+        issues.at[index, "problem"] += f" (event_id={issues.at[index, 'event_id']})"
+    return issues
+
+
 def _summary(records, events, issues, input_rows, valid_rows, ids):
     def counts(frame):
         return {
@@ -114,9 +147,9 @@ def _summary(records, events, issues, input_rows, valid_rows, ids):
 
 
 def analyze_csv(df: pd.DataFrame, model_dir="models") -> dict:
-    """分析上传的原始消息，返回 records/events/issues/summary/metadata。
+    """分析上传的原始消息，返回 records/events/history/issues/summary/metadata。
 
-    records、events、issues 是 DataFrame，summary、metadata 是 dict。
+    records、events、history、issues 是 DataFrame，summary、metadata 是 dict。
     final 的 records 一事件一行；current 为逐条消息。不可预测但 ID 可识别
     的事件保留一条 UNKNOWN / NEEDS_REVIEW 占位记录，prediction_status 为
     NOT_PREDICTED；正常预测为 PREDICTED。未知结果不能当成 SAFE。
@@ -131,6 +164,12 @@ def analyze_csv(df: pd.DataFrame, model_dir="models") -> dict:
     是上传的总消息数。其他字段与 ML/规则输出一致。events 按等级、排序分数
     降序排列；统计只基于 events，不重复累计消息。
 
+    history 只含实际参与推理的合法历史消息，final 严格使用截止时刻前的
+    输入；risk 为原始 log10(Pc)，current 未上传 risk 时留空。issues 保留
+    校验字段并添加页面展示字段 row_number（从 1 开始的数据行号）、field、
+    problem。summary 保留原统计并提供页面使用的 *_count 别名；24 小时
+    覆盖不足时 window_24h_count 为 None，详细计数仍在 window_24h 中。
+
     模型按绝对目录、文件修改时间/大小在当前进程缓存，不训练、不修改原始
     数据或报告、不读取留出标签。缺少模型抛 FileNotFoundError；损坏模型、
     非法 metadata 或程序错误继续抛异常，不包装成成功的预测。返回 metadata
@@ -140,7 +179,8 @@ def analyze_csv(df: pd.DataFrame, model_dir="models") -> dict:
         raise TypeError("df must be a pandas DataFrame")
     bundle = _get_bundle(model_dir)
     metadata = deepcopy(bundle["metadata"])
-    metadata.update(rules_version=RISK_RULES_VERSION, service_version=SERVICE_VERSION)
+    metadata.update(rules_version=RISK_RULES_VERSION, service_version=SERVICE_VERSION,
+                    history_risk_scale="log10(Pc)")
     valid, issues = validate_input(df, metadata)
     ids = _event_ids(df)
     event_order = ids.dropna().drop_duplicates().tolist()
@@ -234,8 +274,17 @@ def analyze_csv(df: pd.DataFrame, model_dir="models") -> dict:
         issues = pd.concat([issues, pd.DataFrame(extra_issues, columns=ISSUE_COLUMNS)], ignore_index=True)
     summary = _summary(records, events, issues, len(df), len(valid), ids)
     summary["inference_rows"] = len(infer)
+    summary.update(
+        event_count=summary["total_events"],
+        needs_review_count=summary["needs_review_events"],
+        **{f"{level.lower()}_count": summary[f"{level.lower()}_events"] for level in LEVEL_RANK},
+        window_24h_count=(summary["window_24h"]["total_events"]
+                         if summary["window_24h"]["coverage_status"] == "OBSERVED" else None),
+        window_24h_note=summary["window_24h"]["coverage_note"],
+    )
     return {
-        "records": records, "events": events, "issues": issues,
+        "records": records, "events": events, "history": _history(infer, df.index),
+        "issues": _display_issues(issues),
         "summary": summary,
         "metadata": metadata,
     }
