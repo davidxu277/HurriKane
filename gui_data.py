@@ -20,10 +20,11 @@ def field(obj, name, default=None):
     return obj.get(name, default) if isinstance(obj, Mapping) else getattr(obj, name, default)
 
 
-def normalize_result(result):
+def normalize_result(result, *, real=False):
     warnings = []
     frames = {}
-    for name, columns in [('events', EVENT_FIELDS), ('history', HISTORY_FIELDS), ('issues', ISSUE_FIELDS)]:
+    issue_columns = ['input_record_id', 'row_position', 'event_id', 'column', 'code', 'severity', 'value', 'message'] if real else ISSUE_FIELDS
+    for name, columns in [('events', EVENT_FIELDS), ('history', HISTORY_FIELDS), ('issues', issue_columns)]:
         value = field(result, name)
         if value is None:
             warnings.append('Backend result is missing the {} collection.'.format(name))
@@ -33,12 +34,16 @@ def normalize_result(result):
             missing = [c for c in columns if c not in frame]
             if missing:
                 warnings.append('{} fields unavailable: {}.'.format(name.title(), ', '.join(missing)))
-            frame = frame.reindex(columns=columns)
+            frame = frame.reindex(columns=list(dict.fromkeys(columns + list(frame.columns))))
         frames[name] = frame
     events = frames['events']
     if events['event_id'].isna().any() or events['event_id'].duplicated().any():
         raise ValueError('Events must have a unique, non-missing event_id; analysis was not displayed.')
-    if not events.empty:
+    if real:
+        events['event_id'] = events['event_id'].astype(str)
+        if events.event_id.str.strip().eq('').any() or events.event_id.duplicated().any():
+            raise ValueError('Events require unique, non-blank identifiers.')
+    elif not events.empty:
         ids = pd.to_numeric(events['event_id'], errors='coerce')
         if ids.isna().any() or (ids % 1 != 0).any():
             raise ValueError('The backend event_id contract requires integer identifiers.')
@@ -47,9 +52,10 @@ def normalize_result(result):
         if col not in ['event_id', 'risk_level', 'trigger_reason', 'data_quality_status', 'data_quality_reason']:
             events[col] = pd.to_numeric(events[col], errors='coerce')
     for col in ['tier_pc', 'predicted_pc', 'conservative_pc', 'alert_score']:
-        valid = events[col].between(0, 1) | events[col].isna()
+        valid = ((events[col].ge(0) & events[col].map(lambda x: pd.isna(x) or math.isfinite(x)))
+                 if real and col == 'alert_score' else events[col].between(0, 1)) | events[col].isna()
         if not valid.all():
-            warnings.append('Invalid {} values are displayed as N/A.'.format(col))
+            warnings.append('Invalid {} values are displayed as {}.'.format(col, '—' if real else 'N/A'))
             events.loc[~valid, col] = float('nan')
     for col in ['time_to_tca_hours', 'miss_distance_m', 'relative_position_r',
                 'relative_position_t', 'relative_position_n']:
@@ -58,13 +64,35 @@ def normalize_result(result):
     if not events['risk_level'].isin(LEVELS).all():
         warnings.append('Some current risk classifications are unavailable. They have not been inferred.')
     history = frames['history']
-    for col in HISTORY_FIELDS:
+    if real:
+        history['event_id'] = history['event_id'].astype(str)
+    for col in (HISTORY_FIELDS[1:] if real else HISTORY_FIELDS):
         history[col] = pd.to_numeric(history[col], errors='coerce')
         history[col] = history[col].where(history[col].map(lambda x: pd.isna(x) or math.isfinite(x)))
     history['miss_distance_m'] = history['miss_distance_m'].where(history['miss_distance_m'] >= 0)
     summary = field(result, 'summary', {})
     metadata = field(result, 'metadata', {})
     return {**frames, 'summary': summary, 'metadata': metadata, 'warnings': warnings}
+
+
+def normalize_service_result(result, raw_df):
+    """Map the public service contract to presentation fields; retain exports intact."""
+    required = {'records', 'events', 'issues', 'summary', 'metadata'}
+    if not isinstance(result, Mapping) or not required.issubset(result):
+        raise ValueError('Analysis returned an incomplete service result.')
+    # Service 1.1 owns horizon eligibility, validation and history construction.
+    # Never reconstruct these rows from records or silently substitute raw input.
+    history = result.get('history', pd.DataFrame(columns=HISTORY_FIELDS))
+    scale_known = field(result['metadata'], 'history_risk_scale') == 'log10(Pc)'
+    if not scale_known:
+        history = pd.DataFrame(columns=HISTORY_FIELDS)
+    data = normalize_result({**result, 'history': history}, real=True)
+    if not scale_known:
+        data['warnings'].append('Historical data unavailable: service history risk scale is not confirmed.')
+    data['issues'] = result['issues'].copy(deep=True)
+    data['records'] = result['records'].copy(deep=True)
+    data['raw_df'] = raw_df.copy(deep=True)
+    return data
 
 
 def priority_events(events, search='', risk='All risk levels', quality='All data quality', sort='Risk priority'):
