@@ -1,0 +1,12 @@
+{
+  "type": "validation_replay",
+  "scope": "has_future == True",
+  "event_id": 2958,
+  "current_tier": "Safe",
+  "predicted_final_tier": "Safe",
+  "true_final_tier": "Critical",
+  "baseline_rank": 1143,
+  "model_rank": 409,
+  "model_review_budget": 111,
+  "description": "该事件未进入本次目标召回预算的复核队列；这是验证回放案例，需 A 确认失败原因。"
+}

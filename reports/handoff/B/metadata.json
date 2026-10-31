@@ -1,0 +1,61 @@
+{
+  "task": "final",
+  "target": "final_tier",
+  "variant": "D_stale",
+  "features": [
+    "time_to_tca",
+    "miss_distance",
+    "relative_speed",
+    "relative_position_r",
+    "relative_position_t",
+    "relative_position_n",
+    "c_object_type",
+    "c_sigma_r",
+    "t_sigma_r",
+    "max_risk_estimate",
+    "F10",
+    "AP",
+    "risk",
+    "risk_delta",
+    "miss_distance_delta",
+    "message_count",
+    "current_tier",
+    "risk_max",
+    "risk_std",
+    "risk_slope",
+    "miss_distance_min",
+    "miss_distance_slope",
+    "c_sigma_r_delta"
+  ],
+  "categorical_features": [
+    "c_object_type",
+    "current_tier"
+  ],
+  "horizon_days": 2.0,
+  "label": "同事件最后一条消息（time_to_tca 最小）的 risk 和 miss_distance，按官方规则分级",
+  "units": {
+    "time_to_tca": "days",
+    "miss_distance": "m",
+    "relative_speed": "m/s"
+  },
+  "target_floor": -10.0,
+  "critical_rates": {
+    "Safe": 0.001971954425942156,
+    "Elevated": 0.060240963855421686,
+    "Critical": 0.7927710843373494
+  },
+  "critical_threshold": 0.5481451801427816,
+  "stale_days": 3.0,
+  "split_seed": 42,
+  "alpha": 0.9,
+  "selection_level": -6.0,
+  "sigma_ratio_threshold": 0.10816974945035213,
+  "train_file": "data/raw/train_data.csv",
+  "events": {
+    "train": 8359,
+    "validation": 1791,
+    "holdout": 1792
+  },
+  "training_events": 6224,
+  "model_version": "20261031-054344"
+}

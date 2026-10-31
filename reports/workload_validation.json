@@ -1,0 +1,88 @@
+{
+  "scope": "future",
+  "role": "primary",
+  "scope_definition": "has_future == True",
+  "events": 1333,
+  "positive_events": 88,
+  "no_future_events": 0,
+  "positive_definition": "final_tier == 'Critical'",
+  "target_recall": 0.9,
+  "target_positive_events": 80,
+  "reference_only": false,
+  "baseline": {
+    "reviews": 113,
+    "review_fraction": 0.08477119279819954,
+    "recall": 0.9090909090909091,
+    "true_positives": 80,
+    "missed_events": 8
+  },
+  "model": {
+    "reviews": 111,
+    "review_fraction": 0.08327081770442611,
+    "recall": 0.9090909090909091,
+    "true_positives": 80,
+    "missed_events": 8
+  },
+  "review_reduction_fraction": 0.017699115044247787,
+  "bootstrap": {
+    "method": "paired non-stratified event bootstrap, percentile interval",
+    "iterations": 1000,
+    "seed": 42,
+    "valid_samples": 1000,
+    "zero_positive_samples": 0,
+    "confidence_level": 0.95,
+    "ci95_lower": -0.13849264705882353,
+    "ci95_upper": 0.1723284313725489
+  },
+  "warnings": [],
+  "tie_break": "score descending, event_id ascending; numeric IDs sort numerically",
+  "schema_version": 2,
+  "target": "final_tier",
+  "input_events": 1791,
+  "excluded_no_future_events": 458,
+  "supplementary_all": {
+    "scope": "all",
+    "role": "supplementary",
+    "scope_definition": "all supplied events",
+    "events": 1791,
+    "positive_events": 125,
+    "no_future_events": 458,
+    "positive_definition": "final_tier == 'Critical'",
+    "target_recall": 0.9,
+    "target_positive_events": 113,
+    "reference_only": false,
+    "baseline": {
+      "reviews": 134,
+      "review_fraction": 0.07481853713009493,
+      "recall": 0.904,
+      "true_positives": 113,
+      "missed_events": 12
+    },
+    "model": {
+      "reviews": 134,
+      "review_fraction": 0.07481853713009493,
+      "recall": 0.904,
+      "true_positives": 113,
+      "missed_events": 12
+    },
+    "review_reduction_fraction": 0.0,
+    "bootstrap": {
+      "method": "paired non-stratified event bootstrap, percentile interval",
+      "iterations": 1000,
+      "seed": 42,
+      "valid_samples": 1000,
+      "zero_positive_samples": 0,
+      "confidence_level": 0.95,
+      "ci95_lower": -0.04197292069632495,
+      "ci95_upper": 0.05519170484687724
+    },
+    "warnings": [
+      "全部事件包含无后续消息的事件，其最终标签本身已在输入中；只能作为补充结果。"
+    ],
+    "tie_break": "score descending, event_id ascending; numeric IDs sort numerically"
+  },
+  "split": "validation",
+  "purpose": "development_only",
+  "source_file": "reports\\validation_predictions.csv",
+  "source_sha256": "3533372b9f758759dec3abaec2fcfa0030be98c487a78b2d48591f15641cb573"
+}
