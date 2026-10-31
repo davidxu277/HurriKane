@@ -8,28 +8,37 @@ import pandas as pd
 import pytest
 
 import train
-from ml import load_bundle, predict_batch
+from ml import TIERS, build_samples, feature_columns, load_bundle, predict_batch
+from validation import validate_input
 
 ITERATIONS = '20'
+PROFILES = (
+    ((-14.0, -12.0, -11.0), -30.0, 9000.0),   # 全程安全
+    ((-14.0, -12.0, -7.0), -5.0, 3000.0),     # 最后升到 Elevated
+    ((-12.0, -9.0, -7.0), -3.5, 500.0),       # 最后升到 Critical
+)
 
 
-def synthetic_messages(events=240, high_risk=40, seed=7):
+def synthetic_messages(events=300, seed=7):
     rng = np.random.default_rng(seed)
     rows = []
     for event_id in range(events):
-        high = event_id < high_risk
-        final_risk = -5.0 if high else -30.0
-        for days, risk in ((5.0, -14.0), (3.0, -12.0), (2.2, -7.0 if high else -11.0), (0.5, final_risk)):
+        risks, final_risk, final_miss = PROFILES[event_id % 3]
+        stops_early = event_id % 5 == 4
+        times = (5.0, 3.0, 2.2) if stops_early else (5.0, 3.0, 2.2, 0.5)
+        values = risks if stops_early else (*risks, final_risk)
+        for days, risk in zip(times, values):
+            is_last = days == 0.5
             rows.append({
                 'event_id': event_id,
                 'time_to_tca': days,
                 'risk': risk,
-                'miss_distance': float(rng.uniform(500, 9000)),
+                'miss_distance': final_miss if is_last else float(rng.uniform(5500, 9000)),
                 'relative_speed': float(rng.uniform(100, 14000)),
                 'relative_position_r': float(rng.normal()),
                 'relative_position_t': float(rng.normal()),
                 'relative_position_n': float(rng.normal()),
-                'c_object_type': 'DEBRIS' if event_id % 3 else 'UNKNOWN',
+                'c_object_type': 'DEBRIS' if event_id % 2 else 'UNKNOWN',
                 'c_sigma_r': float(rng.uniform(1, 50)),
                 't_sigma_r': float(rng.uniform(1, 50)),
                 'max_risk_estimate': risk + 1,
@@ -55,7 +64,7 @@ def trained(tmp_path, monkeypatch):
 
 
 def unlabeled_events():
-    frame = synthetic_messages(events=4, high_risk=1, seed=11)
+    frame = synthetic_messages(events=4, seed=11)
     return frame[frame['time_to_tca'] >= 2].reset_index(drop=True)
 
 
@@ -66,16 +75,23 @@ def test_predict_batch_keeps_every_event_without_near_tca_message(trained):
 
 def test_predict_batch_tiers_on_latest_known_risk(trained):
     result = predict_batch(unlabeled_events(), load_bundle(trained / 'models')).set_index('event_id')
-    assert result.loc[0, 'tier_log10_pc'] == -7.0
-    assert result.loc[1, 'tier_log10_pc'] == -11.0
+    assert result.loc[0, 'tier_log10_pc'] == -11.0
+    assert result.loc[1, 'tier_log10_pc'] == -7.0
 
 
 def test_predict_batch_output_is_complete_and_ordered(trained):
     result = predict_batch(unlabeled_events(), load_bundle(trained / 'models'))
-    columns = ['predicted_pc', 'conservative_pc', 'alert_score', 'tier_pc']
+    columns = ['predicted_pc', 'conservative_pc', 'alert_score', 'tier_pc', 'p_critical']
     assert not result[columns].isna().any().any()
     assert (result['conservative_log10_pc'] >= result['predicted_log10_pc']).all()
-    assert result['alert_score'].between(0, 1).all()
+    assert result['alert_score'].between(0, 1.01).all()
+    assert set(result['predicted_final_tier']) <= set(TIERS)
+
+
+def test_tier_probabilities_sum_to_one(trained):
+    result = predict_batch(unlabeled_events(), load_bundle(trained / 'models'))
+    totals = result[['p_safe', 'p_elevated', 'p_critical']].sum(axis=1)
+    assert np.allclose(totals, 1.0)
 
 
 def test_predict_batch_leaves_ratio_unknown_when_sigma_is_missing(trained):
@@ -84,6 +100,21 @@ def test_predict_batch_leaves_ratio_unknown_when_sigma_is_missing(trained):
     result = predict_batch(frame, load_bundle(trained / 'models')).set_index('event_id')
     assert math.isnan(result.loc[2, 'sigma_ratio'])
     assert not math.isnan(result.loc[2, 'alert_score'])
+
+
+def test_metrics_compare_all_variants_on_events_with_later_messages(trained):
+    metrics = json.loads((trained / 'reports' / 'metrics.json').read_text(encoding='utf-8'))
+    assert set(metrics['validation']['variants']) == {'baseline', 'B', 'C', 'D', 'D_all_events'}
+    assert metrics['validation']['tiers']['future']['events'] < metrics['validation']['tiers']['all']['events']
+    assert metrics['metadata']['variant'] in metrics['validation']['variants']
+
+
+def test_validation_accepts_saved_metadata_with_history_features(trained):
+    metadata = load_bundle(trained / 'models')['metadata']
+    frame = unlabeled_events()
+    valid, issues = validate_input(frame, metadata)
+    assert len(valid) == len(frame)
+    assert issues.empty
 
 
 def test_training_without_flag_never_writes_holdout_results(trained):
@@ -115,3 +146,80 @@ def test_training_reuses_saved_split_list(trained, monkeypatch):
     assert split_path.read_bytes() == before
     validation = pd.read_csv(trained / 'reports' / 'validation_predictions.csv')
     assert sorted(validation['event_id']) == sorted(split['validation'])
+
+
+def read_metrics(root):
+    return json.loads((root / 'reports' / 'metrics.json').read_text(encoding='utf-8'))
+
+
+def test_default_training_excludes_events_without_later_messages(trained):
+    metrics = read_metrics(trained)
+    split = json.loads((trained / 'reports' / 'split_events.json').read_text(encoding='utf-8'))
+    assert metrics['metadata']['variant'] != 'D_all_events'
+    # 合成数据里 event_id % 5 == 4 的事件没有后续消息
+    assert metrics['metadata']['training_events'] == sum(1 for e in split['train'] if e % 5 != 4)
+
+
+def test_variants_are_compared_only_on_events_with_later_messages(trained):
+    validation = read_metrics(trained)['validation']
+    baseline = validation['variants']['baseline']
+    assert baseline['true_positives'] + baseline['false_negatives'] == \
+        validation['tiers']['future']['critical']['positive_events']
+
+
+def test_fallback_variants_use_rates_and_plain_variant_does_not(tmp_path, monkeypatch):
+    samples = build_samples(synthetic_messages(), 'final', 2.0)
+    future = samples[samples['has_future']]
+    seen = []
+    real = train.alert_scores
+
+    def spy(p_critical, current_tier, rates):
+        seen.append(rates)
+        return real(p_critical, current_tier, rates)
+
+    monkeypatch.setattr(train, 'alert_scores', spy)
+    rates = train.critical_rates(future)
+    train.compare_variants(samples, future, future, rates, 5)
+    assert seen == [None, rates, rates, rates]
+
+
+def test_chosen_fallback_is_saved_and_applied_at_inference(tmp_path, monkeypatch):
+    csv_path = tmp_path / 'train.csv'
+    synthetic_messages().to_csv(csv_path, index=False)
+    monkeypatch.setattr(train, 'choose_variant', lambda results: 'C')
+    run_training(monkeypatch, csv_path, tmp_path / 'models', tmp_path / 'reports')
+    bundle = load_bundle(tmp_path / 'models')
+    rates = bundle['metadata']['critical_rates']
+    assert set(rates) == set(TIERS)
+
+    frame = unlabeled_events()
+    frame.loc[frame['event_id'] == 0, 'miss_distance'] = 500.0
+    event = predict_batch(frame, bundle).set_index('event_id').loc[0]
+    assert event['current_tier'] == 'Critical'
+    assert event['alert_score'] >= rates['Critical']
+
+
+def test_validation_accepts_every_history_feature():
+    metadata = {'task': 'final', 'features': feature_columns('final', history=True)}
+    frame = unlabeled_events()
+    valid, issues = validate_input(frame, metadata)
+    assert len(valid) == len(frame)
+    assert issues.empty
+
+
+def test_main_compares_variants_only_on_events_with_later_messages(tmp_path, monkeypatch):
+    csv_path = tmp_path / 'train.csv'
+    synthetic_messages().to_csv(csv_path, index=False)
+    seen = {}
+    real = train.compare_variants
+
+    def spy(train_all, train_future, validation, rates, iterations):
+        seen.update(train_all=train_all, train_future=train_future, validation=validation)
+        return real(train_all, train_future, validation, rates, iterations)
+
+    monkeypatch.setattr(train, 'compare_variants', spy)
+    run_training(monkeypatch, csv_path, tmp_path / 'models', tmp_path / 'reports')
+
+    assert seen['validation']['has_future'].all()
+    assert seen['train_future']['has_future'].all()
+    assert not seen['train_all']['has_future'].all()

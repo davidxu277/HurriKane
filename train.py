@@ -1,9 +1,10 @@
-"""划分事件、跑基线、训练模型并输出评估结果。
+"""划分事件、跑基线、比较方案、训练模型并输出评估结果。
 
-留出集只在加上 --evaluate-holdout 时才会使用，模型固定后只跑一次。
+目标是官方的 final_tier。留出集只在加上 --evaluate-holdout 时才会使用，模型固定后只跑一次。
 """
 import argparse
 import json
+import math
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,39 +15,49 @@ from catboost import CatBoostClassifier, CatBoostRegressor, Pool
 from sklearn.model_selection import train_test_split
 
 from ml import (
-    CATEGORICAL_FEATURES, build_samples, combine_predictions, feature_columns, guard_conservative,
-    load_bundle, predict_batch,
+    CATEGORICAL_FEATURES, TIERS, alert_scores, build_samples, combine_predictions, feature_columns,
+    guard_conservative, load_bundle, predict_batch, tier_probabilities,
 )
 
 ALPHAS = (0.8, 0.9, 0.95)
 DEFAULT_ALPHA = 0.9
 MIN_ALPHA_GAIN = 2           # 至少多抓这么多事件才换 alpha，否则视为样本波动
+MIN_VARIANT_GAIN = 2         # 比较方案时同样的门槛
 HIGH_RISK_LEVELS = (-4.0, -6.0)
-CLASSIFIER_LEVEL = -6.0
+SELECTION_LEVEL = -6.0
 TARGET_FLOOR = -10.0         # 低于这个值都属于 Safe，差别没有操作意义
 MIN_STRATIFY_EVENTS = 10
 MIN_LEVEL_POSITIVES = 20
+REVIEW_RECALL = 0.9
 SEED = 42
+TASK = 'final'
+
+# 名称：(历史特征, 当前等级兜底, 训练时包含没有后续消息的事件)，按从简单到复杂排列
+VARIANTS = {
+    'B': (False, False, False),
+    'C': (False, True, False),
+    'D': (True, True, False),
+    'D_all_events': (True, True, True),
+}
 
 PREDICTION_COLUMNS = [
-    'event_id', 'y_true', 'baseline_score', 'alert_score', 'tier_log10_pc', 'predicted_log10_pc',
+    'event_id', 'y_true', 'final_tier', 'has_future', 'current_tier', 'predicted_final_tier',
+    'p_critical', 'alert_score', 'baseline_score', 'tier_log10_pc', 'predicted_log10_pc',
     'conservative_log10_pc', 'miss_distance_m', 'sigma_ratio',
 ]
 
 
 def split_events(samples, seed=SEED):
-    """按事件划分 70/15/15，高风险事件足够多时分层。"""
-    events = samples.groupby('event_id')['y'].max()
-    high_risk = (events >= CLASSIFIER_LEVEL).to_numpy()
-    counts = np.bincount(high_risk.astype(int), minlength=2)
-    stratify = high_risk if counts.min() >= MIN_STRATIFY_EVENTS else None
+    """按事件划分 70/15/15，按最终等级和是否有后续消息分层。"""
+    strata = (samples['final_tier'].astype(str) + '/' + samples['has_future'].astype(str)).to_numpy()
+    stratify = strata if pd.Series(strata).value_counts().min() >= MIN_STRATIFY_EVENTS else None
 
-    train, rest, _, rest_high_risk = train_test_split(
-        events.index.to_numpy(), high_risk, test_size=0.3, random_state=seed, stratify=stratify
+    train, rest, _, rest_strata = train_test_split(
+        samples['event_id'].to_numpy(), strata, test_size=0.3, random_state=seed, stratify=stratify
     )
     validation, holdout = train_test_split(
         rest, test_size=0.5, random_state=seed,
-        stratify=rest_high_risk if stratify is not None else None,
+        stratify=rest_strata if stratify is not None else None,
     )
     return {'train': train, 'validation': validation, 'holdout': holdout}
 
@@ -95,6 +106,31 @@ def choose_alpha(true_positives_by_alpha, default=DEFAULT_ALPHA, min_gain=MIN_AL
     return default
 
 
+def choose_variant(true_positives_by_variant, min_gain=MIN_VARIANT_GAIN):
+    """按从简单到复杂比较，只有多抓足够多的事件才换更复杂的方案。"""
+    chosen = next(iter(true_positives_by_variant))
+    for name, true_positives in true_positives_by_variant.items():
+        if true_positives - true_positives_by_variant[chosen] >= min_gain:
+            chosen = name
+    return chosen
+
+
+def critical_rates(samples):
+    """每个当前等级的事件，最终变成 Critical 的比例。"""
+    rates = samples['final_tier'].eq('Critical').groupby(samples['current_tier']).mean()
+    return {tier: float(rates.get(tier, 0.0)) for tier in TIERS}
+
+
+def review_count(positive, scores, recall=REVIEW_RECALL):
+    """从分数最高的事件往下看，抓到指定比例的目标事件时看了多少个。"""
+    positive = np.asarray(positive, dtype=bool)
+    if not positive.any():
+        return None
+    needed = math.ceil(recall * positive.sum())
+    order = np.argsort(-np.asarray(scores, dtype=float), kind='stable')
+    return int(np.searchsorted(np.cumsum(positive[order]), needed) + 1)
+
+
 def alert_report(positive, alert):
     positive = np.asarray(positive, dtype=bool)
     alert = np.asarray(alert, dtype=bool)
@@ -110,6 +146,31 @@ def alert_report(positive, alert):
             'true_positives': tp, 'false_positives': fp, 'false_negatives': fn}
 
 
+def tier_report(final, current, predicted, baseline_score, alert_score):
+    """官方目标的成绩：和“最终等级等于当前等级”这个基线比较。"""
+    final, current, predicted = np.asarray(final), np.asarray(current), np.asarray(predicted)
+    positive = final == 'Critical'
+    baseline_alert = current == 'Critical'
+    negatives = int((~positive).sum())
+    baseline_fpr = float((baseline_alert & ~positive).sum() / negatives) if negatives else 0.0
+    return {
+        'events': len(final),
+        'accuracy': {'baseline': float((current == final).mean()), 'model': float((predicted == final).mean())},
+        'confusion': pd.crosstab(pd.Series(final, name='final'), pd.Series(predicted, name='predicted'))
+                       .to_dict(orient='index'),
+        'critical': {
+            'positive_events': int(positive.sum()),
+            'baseline_fpr': baseline_fpr,
+            'baseline': alert_report(positive, baseline_alert),
+            'model': alert_report(positive, predicted == 'Critical'),
+            'matched': {'baseline': recall_at_fpr(positive, baseline_score, baseline_fpr),
+                        'model': recall_at_fpr(positive, alert_score, baseline_fpr)},
+            'review_for_90_recall': {'baseline': review_count(positive, baseline_score),
+                                     'model': review_count(positive, alert_score)},
+        },
+    }
+
+
 def error_report(y, prediction):
     error = np.asarray(prediction, dtype=float) - y
     return {'rmse': float(np.sqrt(np.mean(error ** 2))), 'mae': float(np.mean(np.abs(error)))}
@@ -120,7 +181,7 @@ def clip_target(values):
 
 
 def evaluate(y_raw, baseline, value_scores, rank_scores, constant):
-    """value_scores 是 log10(Pc) 估计；rank_scores 只用于排序比较。"""
+    """risk 目标的成绩。value_scores 是 log10(Pc) 估计；rank_scores 只用于排序比较。"""
     y_raw = np.asarray(y_raw, dtype=float)
     y = clip_target(y_raw)
     regression = {
@@ -162,7 +223,11 @@ def selection_level(report):
     strict = str(HIGH_RISK_LEVELS[0])
     if report['levels'][strict]['positive_events'] >= MIN_LEVEL_POSITIVES:
         return strict
-    return str(HIGH_RISK_LEVELS[1])
+    return str(SELECTION_LEVEL)
+
+
+def categorical_in(features):
+    return [name for name in CATEGORICAL_FEATURES if name in features]
 
 
 def fit_regressor(loss, pool, eval_pool, iterations):
@@ -173,26 +238,43 @@ def fit_regressor(loss, pool, eval_pool, iterations):
     return model.fit(pool, eval_set=eval_pool, early_stopping_rounds=50)
 
 
-def fit_classifier(features, labels, eval_features, eval_labels, iterations):
+def fit_classifier(train, validation, features, iterations):
     model = CatBoostClassifier(
-        iterations=iterations, depth=6, learning_rate=0.05, auto_class_weights='Balanced',
+        iterations=iterations, depth=6, learning_rate=0.05, loss_function='MultiClass',
         random_seed=SEED, verbose=False, allow_writing_files=False,
     )
-    pool = Pool(features, labels, cat_features=CATEGORICAL_FEATURES)
-    eval_pool = Pool(eval_features, eval_labels, cat_features=CATEGORICAL_FEATURES)
+    cats = categorical_in(features)
+    pool = Pool(train[features], train['final_tier'], cat_features=cats)
+    eval_pool = Pool(validation[features], validation['final_tier'], cat_features=cats)
     return model.fit(pool, eval_set=eval_pool, early_stopping_rounds=50)
 
 
-def write_predictions(path, samples, estimate, conservative, alert_score):
-    predictions = combine_predictions(samples, estimate, conservative, alert_score)
-    predictions['y_true'] = samples['y'].to_numpy()
-    predictions[PREDICTION_COLUMNS].to_csv(path, index=False)
+def compare_variants(train_all, train, validation, rates, iterations):
+    """在有后续消息的验证事件上比较各方案，并和当前等级基线同误报率比较。"""
+    positive = validation['final_tier'].eq('Critical').to_numpy()
+    baseline_alert = validation['current_tier'].eq('Critical').to_numpy()
+    baseline_fpr = float((baseline_alert & ~positive).sum() / max((~positive).sum(), 1))
+    report = {'baseline': {**recall_at_fpr(positive, validation['baseline_score'], baseline_fpr),
+                           'review_for_90_recall': review_count(positive, validation['baseline_score'])}}
+    fitted, results = {}, {}
+    for name, (history, fallback, all_events) in VARIANTS.items():
+        features = feature_columns(TASK, history=history)
+        if (history, all_events) not in fitted:
+            fitted[(history, all_events)] = fit_classifier(
+                train_all if all_events else train, validation, features, iterations
+            )
+        probabilities = tier_probabilities(fitted[(history, all_events)], validation[features])
+        scores = alert_scores(probabilities['Critical'], validation['current_tier'], rates if fallback else None)
+        results[name] = {**recall_at_fpr(positive, scores, baseline_fpr),
+                         'review_for_90_recall': review_count(positive, scores)}
+    chosen = choose_variant({name: result['true_positives'] for name, result in results.items()})
+    history, _, all_events = VARIANTS[chosen]
+    return chosen, fitted[(history, all_events)], {'baseline': report['baseline'], **results}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--train', required=True)
-    parser.add_argument('--task', choices=['final', 'current'], default='final')
     parser.add_argument('--horizon-days', type=float, default=2.0)
     parser.add_argument('--iterations', type=int, default=400)
     parser.add_argument('--models', default='models')
@@ -206,62 +288,70 @@ def main():
     reports_dir.mkdir(exist_ok=True)
 
     raw = pd.read_csv(args.train, low_memory=False)
-    samples = build_samples(raw, args.task, args.horizon_days)
-    print(f'原始 {len(raw)} 行、{raw["event_id"].nunique()} 个事件 -> 样本 {len(samples)} 个')
+    samples = build_samples(raw, TASK, args.horizon_days)
+    print(f'原始 {len(raw)} 行、{raw["event_id"].nunique()} 个事件 -> 样本 {len(samples)} 个，'
+          f'其中有后续消息 {int(samples["has_future"].sum())} 个')
 
     split = load_or_create_split(reports_dir / 'split_events.json', samples)
     parts = {name: samples[samples['event_id'].isin(ids)] for name, ids in split.items()}
+    train_all = parts['train']
+    train = train_all[train_all['has_future']]
+    validation = parts['validation'][parts['validation']['has_future']]
 
-    features = feature_columns(args.task)
-    train, validation = parts['train'], parts['validation']
+    rates = critical_rates(train)
+    variant, classifier, variant_report = compare_variants(train_all, train, validation, rates, args.iterations)
+    history, fallback, _ = VARIANTS[variant]
+    features = feature_columns(TASK, history=history)
+    used_rates = rates if fallback else None
+    print(f'选定方案 {variant}')
+
     train_y, validation_y = clip_target(train['y']), clip_target(validation['y'])
-    pool = Pool(train[features], train_y, cat_features=CATEGORICAL_FEATURES)
-    eval_pool = Pool(validation[features], validation_y, cat_features=CATEGORICAL_FEATURES)
+    cats = categorical_in(features)
+    pool = Pool(train[features], train_y, cat_features=cats)
+    eval_pool = Pool(validation[features], validation_y, cat_features=cats)
 
     # 最终 risk 大量堆在下限，中位数模型只会输出下限，所以最佳估计用 RMSE 模型
     estimate_model = fit_regressor('RMSE', pool, eval_pool, args.iterations)
     candidates = {alpha: fit_regressor(f'Quantile:alpha={alpha}', pool, eval_pool, args.iterations)
                   for alpha in ALPHAS}
-    classifier = fit_classifier(
-        train[features], (train['y'] >= CLASSIFIER_LEVEL).astype(int),
-        validation[features], (validation['y'] >= CLASSIFIER_LEVEL).astype(int),
-        args.iterations,
-    )
-
     constant = float(train_y.mean())
 
-    def report_for(part, conservative_models):
+    def risk_report(part, conservative_models):
         estimate = estimate_model.predict(part[features])
         rank = rank_scores(
             estimate,
             {alpha: model.predict(part[features]) for alpha, model in conservative_models.items()},
-            classifier.predict_proba(part[features])[:, 1],
+            tier_probabilities(classifier, part[features])['Critical'].to_numpy(),
         )
-        return evaluate(part['y'], part['baseline_score'], {'estimate_model': estimate}, rank, constant)
+        return evaluate(part['y'], part['risk'], {'estimate_model': estimate}, rank, constant)
 
-    validation_report = report_for(validation, candidates)
-    level = selection_level(validation_report)
-    matched = validation_report['levels'][level]['at_matched_fpr']
+    validation_risk = risk_report(validation, candidates)
+    level = selection_level(validation_risk)
+    matched = validation_risk['levels'][level]['at_matched_fpr']
     alpha = choose_alpha({a: matched[f'conservative_{a}']['true_positives'] for a in ALPHAS})
     conservative_model = candidates[alpha]
     print(f'选定 alpha={alpha}（比较标签 y >= {level}）')
 
     safe_looking = train.loc[train['y'] < -6, 'sigma_ratio'].replace(np.inf, np.nan).dropna()
     metadata = {
-        'task': args.task,
+        'task': TASK,
+        'target': 'final_tier',
+        'variant': variant,
         'features': features,
-        'categorical_features': CATEGORICAL_FEATURES,
+        'categorical_features': cats,
         'horizon_days': args.horizon_days,
-        'label': 'final 为同事件最后一条消息的 risk；current 为当前行 risk',
+        'label': '同事件最后一条消息（time_to_tca 最小）的 risk 和 miss_distance，按官方规则分级',
         'units': {'time_to_tca': 'days', 'miss_distance': 'm', 'relative_speed': 'm/s'},
         'target_floor': TARGET_FLOOR,
-        'classifier_level': CLASSIFIER_LEVEL,
+        'critical_rates': used_rates,
+        'critical_threshold': variant_report[variant]['threshold'],
         'split_seed': SEED,
         'alpha': alpha,
         'selection_level': float(level),
         'sigma_ratio_threshold': float(safe_looking.quantile(0.9)),
         'train_file': args.train,
         'events': {name: len(part) for name, part in parts.items()},
+        'training_events': len(train_all) if VARIANTS[variant][2] else len(train),
         'model_version': datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S'),
     }
     estimate_model.save_model(str(models_dir / 'estimate.cbm'))
@@ -272,16 +362,36 @@ def main():
     )
 
     def predict_part(part):
-        return (estimate_model.predict(part[features]), conservative_model.predict(part[features]),
-                classifier.predict_proba(part[features])[:, 1])
+        result = combine_predictions(
+            part,
+            estimate_model.predict(part[features]),
+            conservative_model.predict(part[features]),
+            tier_probabilities(classifier, part[features]),
+            used_rates,
+            metadata['critical_threshold'],
+        )
+        result['y_true'] = part['y'].to_numpy()
+        result['final_tier'] = part['final_tier'].to_numpy()
+        result['has_future'] = part['has_future'].to_numpy()
+        return result
 
-    write_predictions(reports_dir / 'validation_predictions.csv', validation, *predict_part(validation))
-    metrics = {'metadata': metadata, 'validation': validation_report}
+    def tiers_for(predictions):
+        def report(frame):
+            return tier_report(frame['final_tier'], frame['current_tier'], frame['predicted_final_tier'],
+                               frame['baseline_score'], frame['alert_score'])
+        return {'future': report(predictions[predictions['has_future']]), 'all': report(predictions)}
+
+    validation_predictions = predict_part(parts['validation'])
+    validation_predictions[PREDICTION_COLUMNS].to_csv(reports_dir / 'validation_predictions.csv', index=False)
+    metrics = {'metadata': metadata, 'validation': {
+        'variants': variant_report, 'tiers': tiers_for(validation_predictions), 'risk': validation_risk,
+    }}
 
     if args.evaluate_holdout:
-        holdout = parts['holdout']
-        write_predictions(reports_dir / 'holdout_predictions.csv', holdout, *predict_part(holdout))
-        metrics['holdout'] = report_for(holdout, {alpha: conservative_model})
+        holdout_predictions = predict_part(parts['holdout'])
+        holdout_predictions[PREDICTION_COLUMNS].to_csv(reports_dir / 'holdout_predictions.csv', index=False)
+        metrics['holdout'] = {'tiers': tiers_for(holdout_predictions),
+                              'risk': risk_report(parts['holdout'], {alpha: conservative_model})}
 
     if args.test:
         test = pd.read_csv(args.test, low_memory=False)

@@ -5,14 +5,15 @@ import pandas as pd
 import pytest
 
 from train import (
-    alert_report, choose_alpha, evaluate, load_or_create_split, rank_scores, recall_at_fpr, split_events,
+    alert_report, choose_alpha, choose_variant, critical_rates, evaluate, load_or_create_split, rank_scores,
+    recall_at_fpr, review_count, split_events, tier_report,
 )
 
 
 def fake_samples(events=1000, positives=100):
-    y = np.full(events, -12.0)
-    y[:positives] = -5.0
-    return pd.DataFrame({'event_id': np.arange(events), 'y': y})
+    tiers = np.full(events, 'Safe', dtype=object)
+    tiers[:positives] = 'Critical'
+    return pd.DataFrame({'event_id': np.arange(events), 'final_tier': tiers, 'has_future': True})
 
 
 def test_split_puts_each_event_in_exactly_one_group():
@@ -29,10 +30,20 @@ def test_split_sizes_are_70_15_15():
     assert [len(split[k]) for k in ('train', 'validation', 'holdout')] == [700, 150, 150]
 
 
-def test_split_spreads_high_risk_events_across_groups():
+def test_split_spreads_critical_events_across_groups():
     split = split_events(fake_samples(), seed=42)
-    high_risk = set(range(100))
-    assert [len(high_risk & set(split[k])) for k in ('train', 'validation', 'holdout')] == [70, 15, 15]
+    critical = set(range(100))
+    assert [len(critical & set(split[k])) for k in ('train', 'validation', 'holdout')] == [70, 15, 15]
+
+
+def test_split_also_spreads_events_without_future_messages():
+    samples = fake_samples()
+    samples['has_future'] = samples['event_id'] % 4 != 0
+    split = split_events(samples, seed=42)
+    no_future = set(samples.loc[~samples['has_future'], 'event_id'])
+    counts = [len(no_future & set(split[k])) for k in ('train', 'validation', 'holdout')]
+    assert abs(counts[0] - 175) <= 1
+    assert abs(counts[1] - counts[2]) <= 2
 
 
 def test_split_is_reproducible_for_same_seed():
@@ -41,7 +52,7 @@ def test_split_is_reproducible_for_same_seed():
     assert list(first['holdout']) == list(second['holdout'])
 
 
-def test_split_falls_back_when_high_risk_events_are_too_rare():
+def test_split_falls_back_when_a_group_is_too_rare():
     split = split_events(fake_samples(events=100, positives=2), seed=42)
     assert sum(len(split[k]) for k in ('train', 'validation', 'holdout')) == 100
 
@@ -74,6 +85,75 @@ def test_choose_alpha_keeps_default_when_gain_is_within_noise():
 
 def test_choose_alpha_switches_for_clear_gain():
     assert choose_alpha({0.8: 10, 0.9: 10, 0.95: 12}) == 0.95
+
+
+def test_choose_variant_keeps_simpler_option_within_noise():
+    assert choose_variant({'B': 40, 'C': 41, 'D': 41}) == 'B'
+
+
+def test_choose_variant_moves_on_for_clear_gain():
+    assert choose_variant({'B': 40, 'C': 41, 'D': 42}) == 'D'
+
+
+def test_choose_variant_measures_gain_from_current_choice():
+    assert choose_variant({'B': 40, 'C': 42, 'D': 43, 'E': 44}) == 'E'
+
+
+def test_critical_rates_are_measured_per_current_tier():
+    samples = pd.DataFrame({
+        'current_tier': ['Critical', 'Critical', 'Critical', 'Critical', 'Elevated', 'Elevated', 'Safe'],
+        'final_tier': ['Critical', 'Critical', 'Critical', 'Safe', 'Critical', 'Safe', 'Safe'],
+    })
+    assert critical_rates(samples) == {'Critical': 0.75, 'Elevated': 0.5, 'Safe': 0.0}
+
+
+def test_review_count_stops_when_enough_events_are_found():
+    positive = np.array([0, 1, 0, 1, 1, 0], dtype=bool)
+    scores = np.array([6, 5, 4, 3, 2, 1], dtype=float)
+    assert review_count(positive, scores, recall=0.6) == 4
+    assert review_count(positive, scores, recall=1.0) == 5
+
+
+def test_review_count_is_unknown_without_positive_events():
+    assert review_count(np.zeros(3, dtype=bool), np.arange(3.0)) is None
+
+
+def sample_tier_report():
+    return tier_report(
+        final=np.array(['Critical', 'Critical', 'Safe', 'Safe', 'Elevated']),
+        current=np.array(['Critical', 'Safe', 'Critical', 'Safe', 'Elevated']),
+        predicted=np.array(['Critical', 'Critical', 'Safe', 'Safe', 'Safe']),
+        baseline_score=np.array([2.9, 0.1, 2.8, 0.2, 1.5]),
+        alert_score=np.array([0.9, 0.8, 0.2, 0.1, 0.3]),
+    )
+
+
+def test_tier_report_compares_accuracy_with_current_tier():
+    report = sample_tier_report()
+    assert report['events'] == 5
+    assert report['accuracy']['baseline'] == 0.6
+    assert report['accuracy']['model'] == 0.8
+
+
+def test_tier_report_counts_critical_alerts():
+    critical = sample_tier_report()['critical']
+    assert critical['positive_events'] == 2
+    assert critical['baseline']['true_positives'] == 1
+    assert critical['baseline']['false_positives'] == 1
+    assert critical['model']['true_positives'] == 2
+    assert critical['model']['false_positives'] == 0
+
+
+def test_tier_report_compares_scores_at_baseline_false_alarm_rate():
+    critical = sample_tier_report()['critical']
+    assert critical['baseline_fpr'] == pytest.approx(1 / 3)
+    assert critical['matched']['model']['true_positives'] == 2
+    assert critical['matched']['model']['false_positives'] <= 1
+
+
+def test_tier_report_shows_review_workload():
+    review = sample_tier_report()['critical']['review_for_90_recall']
+    assert review == {'baseline': 5, 'model': 2}
 
 
 def test_alert_report_counts_and_scores():
@@ -181,3 +261,8 @@ def test_split_list_that_does_not_match_events_is_rejected(tmp_path, saved):
     path.write_text(json.dumps(saved), encoding='utf-8')
     with pytest.raises(ValueError):
         load_or_create_split(path, fake_samples(events=4, positives=1))
+
+
+def test_critical_rates_cover_tiers_missing_from_training():
+    samples = pd.DataFrame({'current_tier': ['Safe', 'Safe'], 'final_tier': ['Safe', 'Critical']})
+    assert critical_rates(samples) == {'Safe': 0.5, 'Elevated': 0.0, 'Critical': 0.0}

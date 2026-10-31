@@ -16,8 +16,10 @@ class Regressor:
 
 
 class Classifier:
+    classes_ = np.array(["Critical", "Elevated", "Safe"])
+
     def predict_proba(self, features):
-        return np.tile([0.8, 0.2], (len(features), 1))
+        return np.tile([0.2, 0.3, 0.5], (len(features), 1))
 
 
 @pytest.fixture
@@ -29,6 +31,7 @@ def models(tmp_path, monkeypatch):
         "metadata": {
             "task": "final", "horizon_days": 2.0, "features": feature_columns("final"),
             "sigma_ratio_threshold": 0.1, "model_version": "test",
+            "critical_rates": None, "critical_threshold": 0.5,
         },
         "estimate": Regressor(-9), "conservative": Regressor(-8),
         "classifier": Classifier(),
@@ -231,3 +234,11 @@ def test_unidentified_row_is_reported_without_inventing_an_event(models):
 def test_missing_models_raise_explicit_error(tmp_path):
     with pytest.raises(FileNotFoundError, match="模型未就绪"):
         service.analyze_csv(messages(), tmp_path)
+
+
+def test_events_carry_predicted_final_tier_for_the_page(models):
+    events = analyze(messages(), models)["events"].set_index("event_id")
+    assert events.loc["b", "current_tier"] == "Elevated"
+    assert events.loc["b", "predicted_final_tier"] == "Safe"
+    assert events.loc["b", "p_critical"] == 0.2
+    assert events.loc["b", "p_safe"] == 0.5

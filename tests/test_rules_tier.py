@@ -118,7 +118,8 @@ def test_grades_real_ml_output_without_sigma_columns():
         'max_risk_estimate': -4.0, 'F10': 80.0, 'AP': 12.0,
     }])
     samples = build_samples(messages, 'final', 2.0, labeled=False)
-    predictions = combine_predictions(samples, [-9.0], [-8.0], [0.4])
+    probabilities = pd.DataFrame({'Safe': [0.5], 'Elevated': [0.3], 'Critical': [0.2]})
+    predictions = combine_predictions(samples, [-9.0], [-8.0], probabilities, None, 0.4)
 
     row = apply_risk_rules(predictions, THRESHOLD).iloc[0]
 

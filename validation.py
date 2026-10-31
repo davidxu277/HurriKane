@@ -12,7 +12,11 @@ RAW_FEATURES = (
     "relative_position_r", "relative_position_t", "relative_position_n",
     "c_object_type", "c_sigma_r", "t_sigma_r", "max_risk_estimate", "F10", "AP",
 )
-DERIVED_FEATURES = {"risk_delta", "miss_distance_delta", "message_count"}
+DERIVED_FEATURES = {
+    "risk_delta", "miss_distance_delta", "message_count", "current_tier",
+    "risk_max", "risk_std", "risk_slope", "miss_distance_min",
+    "miss_distance_slope", "c_sigma_r_delta",
+}
 ISSUE_COLUMNS = [
     "input_record_id", "row_position", "event_id", "column", "code",
     "severity", "value", "message",

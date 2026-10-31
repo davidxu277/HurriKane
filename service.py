@@ -16,7 +16,8 @@ SERVICE_VERSION = "1.0"
 MODEL_FILES = ("metadata.json", "estimate.cbm", "conservative.cbm", "classifier.cbm")
 PREDICTION_COLUMNS = [
     "input_record_id", "row_position", "event_id", "time_to_tca_hours",
-    "miss_distance_m", "tier_log10_pc", "tier_pc", "predicted_log10_pc",
+    "miss_distance_m", "current_tier", "predicted_final_tier",
+    "p_safe", "p_elevated", "p_critical", "tier_log10_pc", "tier_pc", "predicted_log10_pc",
     "predicted_pc", "conservative_log10_pc", "conservative_pc", "alert_score",
     "baseline_score", "sigma_ratio", "c_sigma_r", "t_sigma_r",
     "relative_position_r", "relative_position_t", "relative_position_n", "c_object_type",
