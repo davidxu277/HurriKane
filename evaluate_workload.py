@@ -1,4 +1,4 @@
-"""比较同一召回目标下的事件复核量；只读已有预测，不训练或调整模型。"""
+"""最终 Critical 复核量：有后续消息事件为主结果，全部事件为补充。"""
 
 import argparse
 import hashlib
@@ -10,7 +10,21 @@ import numpy as np
 import pandas as pd
 
 
-REQUIRED_COLUMNS = ("event_id", "y_true", "baseline_score", "alert_score")
+REQUIRED_COLUMNS = ("event_id", "final_tier", "has_future", "baseline_score", "alert_score")
+TIERS = ("Safe", "Elevated", "Critical")
+
+
+def _future_flag(value):
+    # 不能用 astype(bool)：字符串 "False" 也会被当成 True。
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    if isinstance(value, (int, float, np.number)) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        parsed = {"true": True, "false": False, "1": True, "0": False}
+        if value.strip().lower() in parsed:
+            return parsed[value.strip().lower()]
+    raise ValueError("has_future must contain explicit True/False or 1/0 values, with no missing values")
 
 
 def _validated_frame(df):
@@ -30,15 +44,16 @@ def _validated_frame(df):
         raise ValueError("event_id must be present and finite")
     if ids.duplicated().any():
         raise ValueError("Expected one row per event; duplicate event_id found")
-    for name in REQUIRED_COLUMNS[1:]:
+    if not frame.final_tier.isin(TIERS).all():
+        raise ValueError("final_tier must contain only Safe, Elevated or Critical, with no missing labels")
+    frame["has_future"] = frame.has_future.map(_future_flag).astype(bool)
+    for name in ("baseline_score", "alert_score"):
         values = pd.to_numeric(frame[name], errors="coerce").to_numpy(dtype=float)
         if not np.isfinite(values).all():
             raise ValueError(f"{name} must contain only finite numeric values")
         frame[name] = values
-    if frame.y_true.gt(0).any():
-        raise ValueError("y_true must be log10(Pc) <= 0")
-    if not frame.alert_score.between(0, 1).all():
-        raise ValueError("alert_score must be in [0, 1]")
+    # 两列都是排序分数。新版 alert_score 带等级兜底与微小排序项，可能略大于 1，
+    # 不能把它当碰撞概率校验或截断，否则会破坏排序。
     # 数字 ID 按数字排序，其他 ID 按字符串排序；行输入顺序不决定并列次序。
     key = ids if pd.api.types.is_numeric_dtype(ids) else ids.astype(str)
     if key.duplicated().any():
@@ -75,28 +90,8 @@ def _workload(positive, order, target):
     }
 
 
-def evaluate_workload(
-    predictions, target_recall=0.9, positive_threshold=-6.0,
-    bootstrap_iterations=1000, seed=42,
-):
-    """返回 (报告 dict, 曲线 DataFrame)，不修改输入。
-
-    高风险仅按 y_true >= positive_threshold 定义，不计距离规则。两种排序
-    都看同一批事件，取首次达到 ceil(target_recall * 正例数) 的复核数量。
-    reduction=(baseline-model)/baseline；负数表示模型需要看更多事件。
-
-    bootstrap 用同一次事件有放回抽样同时评估两种排序，保留重复抽到的
-    事件。零正例的重采样无法定义召回率，会单独计数并排除出区间；区间
-    此时以存在正例的重采样为条件。没有原始正例时输出 None，不编造数值。
-    """
-    if not np.isfinite(target_recall) or not 0 < target_recall <= 1:
-        raise ValueError("target_recall must be in (0, 1]")
-    if not np.isfinite(positive_threshold) or positive_threshold > 0:
-        raise ValueError("positive_threshold must be finite and <= 0")
-    if isinstance(bootstrap_iterations, bool) or not isinstance(bootstrap_iterations, int) or bootstrap_iterations < 1:
-        raise ValueError("bootstrap_iterations must be a positive integer")
-    frame = _validated_frame(predictions)
-    positive = frame.y_true.to_numpy() >= positive_threshold
+def _evaluate_scope(frame, scope, target_recall, bootstrap_iterations, seed):
+    positive = frame.final_tier.to_numpy() == "Critical"
     baseline_scores = frame.baseline_score.to_numpy()
     model_scores = frame.alert_score.to_numpy()
     n, p = len(frame), int(positive.sum())
@@ -128,16 +123,22 @@ def evaluate_workload(
         zero_positive = bootstrap_iterations
     lower, upper = (float(value) for value in np.quantile(reductions, [0.025, 0.975])) if len(reductions) >= 2 else (None, None)
     warnings = []
+    if not n:
+        warnings.append("没有符合该评估范围的事件，复核量和召回率不可评估。")
     if p < 20:
         warnings.append("高风险事件少于 20 个，样本太少，只作方向性参考。")
     if not p:
         warnings.append("没有真实高风险事件，召回率、目标复核量及其减少比例均不可评估。")
     if zero_positive:
         warnings.append(f"{zero_positive} 次 bootstrap 无正例，未纳入区间；区间以重采样存在正例为条件。")
+    if scope == "all":
+        warnings.append("全部事件包含无后续消息的事件，其最终标签本身已在输入中；只能作为补充结果。")
     report = {
-        "events": n, "positive_events": p,
-        "positive_definition": f"y_true >= {positive_threshold:g} (log10(Pc))",
-        "positive_threshold": positive_threshold, "target_recall": target_recall,
+        "scope": scope, "role": "primary" if scope == "future" else "supplementary",
+        "scope_definition": "has_future == True" if scope == "future" else "all supplied events",
+        "events": n, "positive_events": p, "no_future_events": int((~frame.has_future).sum()),
+        "positive_definition": "final_tier == 'Critical'",
+        "target_recall": target_recall,
         "target_positive_events": target, "reference_only": p < 20,
         "baseline": baseline, "model": model,
         "review_reduction_fraction": reduction,
@@ -153,6 +154,7 @@ def evaluate_workload(
     base_tp = np.r_[0, np.cumsum(positive[baseline_order])]
     model_tp = np.r_[0, np.cumsum(positive[model_order])]
     curves = pd.DataFrame({
+        "scope": scope,
         "reviewed_events": np.arange(n + 1),
         "baseline_true_positives": base_tp, "model_true_positives": model_tp,
         "baseline_recall": base_tp / p if p else np.full(n + 1, np.nan),
@@ -161,51 +163,87 @@ def evaluate_workload(
     return report, curves
 
 
+def evaluate_workload(predictions, target_recall=0.9, bootstrap_iterations=1000, seed=42):
+    """返回 (报告 dict, 曲线 DataFrame)，不修改输入或模型。
+
+    默认高风险是 final_tier == 'Critical'，不再按 y_true/Pc 阈值重建标签。
+    顶层指标仅来自 has_future == True，supplementary_all 单独报告全部事件。
+    两组曲线用 scope=future/all 区分，读取曲线时必须先筛选 scope。
+
+    baseline_score 和 alert_score 都直接使用 A 输出的排序分数。按事件 ID
+    打破同分，取首次达到 ceil(target_recall * 正例数) 时的复核数量。
+    reduction=(baseline-model)/baseline；负数表示模型需要复核更多事件。
+
+    每个评估范围内采用配对事件 bootstrap：同一次有放回抽样同时评估两种
+    排序，保留重复副本。零正例重采样不纳入区间并单独计数；区间此时以存在
+    正例为条件。原始范围无正例或为空时返回 None，不编造 0%/100% 成绩。
+    """
+    if isinstance(target_recall, bool) or not np.isfinite(target_recall) or not 0 < target_recall <= 1:
+        raise ValueError("target_recall must be in (0, 1]")
+    if isinstance(bootstrap_iterations, bool) or not isinstance(bootstrap_iterations, int) or bootstrap_iterations < 1:
+        raise ValueError("bootstrap_iterations must be a positive integer")
+    if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
+        raise ValueError("seed must be a nonnegative integer")
+    frame = _validated_frame(predictions)
+    future = frame[frame.has_future]
+    report, primary_curve = _evaluate_scope(future, "future", target_recall, bootstrap_iterations, seed)
+    supplementary, all_curve = _evaluate_scope(frame, "all", target_recall, bootstrap_iterations, seed)
+    report.update(schema_version=2, target="final_tier", input_events=len(frame),
+                  excluded_no_future_events=len(frame) - len(future), supplementary_all=supplementary)
+    return report, pd.concat([primary_curve, all_curve], ignore_index=True)
+
+
 def save_curve(report, curves, path):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from matplotlib.ticker import PercentFormatter
 
-    figure, axes = plt.subplots(figsize=(9, 5.5))
-    if report["positive_events"]:
-        axes.step(curves.reviewed_events, curves.baseline_recall, where="post", label="Latest-risk baseline", linewidth=2)
-        axes.step(curves.reviewed_events, curves.model_recall, where="post", label="Classifier ranking", linewidth=2)
-        axes.axhline(report["target_recall"], color="gray", linestyle="--", linewidth=1)
-        for key, color in [("baseline", "C0"), ("model", "C1")]:
-            point = report[key]
-            axes.scatter(point["reviews"], point["recall"], color=color, zorder=3)
-            axes.annotate(f"{point['reviews']} reviews", (point["reviews"], point["recall"]),
-                          xytext=(8, -25 if key == "baseline" else 14), textcoords="offset points", color=color)
-        axes.legend(loc="lower right")
-    else:
-        axes.text(0.5, 0.5, "No positive events: recall/workload undefined", ha="center", transform=axes.transAxes)
-    scope = "Validation (development only)" if report["split"] == "validation" else "Holdout"
-    note = " | directional evidence only (<20 positives)" if report["reference_only"] else ""
-    axes.set_title(f"{scope}: {report['events']} events, {report['positive_events']} positives\nTarget recall {report['target_recall']:.0%}{note}")
-    axes.set_xlabel("Events reviewed (lower is better at the same recall)")
-    axes.set_ylabel("Recall of Pc-defined high-risk events")
-    axes.yaxis.set_major_formatter(PercentFormatter(1))
-    axes.set_ylim(-0.02, 1.06)
-    axes.set_xlim(0, report["events"])
-    axes.grid(alpha=0.2)
+    figure, panels = plt.subplots(1, 2, figsize=(13, 5.5), sharey=True)
+    for axes, item in zip(panels, [report, report["supplementary_all"]]):
+        data = curves[curves.scope.eq(item["scope"])]
+        if item["positive_events"]:
+            axes.step(data.reviewed_events, data.baseline_recall, where="post", label="Provided baseline_score", linewidth=2)
+            axes.step(data.reviewed_events, data.model_recall, where="post", label="Model alert_score", linewidth=2)
+            axes.axhline(item["target_recall"], color="gray", linestyle="--", linewidth=1)
+            for key, color in [("baseline", "C0"), ("model", "C1")]:
+                point = item[key]
+                axes.scatter(point["reviews"], point["recall"], color=color, zorder=3)
+                right_edge = point["reviews"] >= 0.75 * item["events"]
+                y_offset = (-20 if key == "baseline" else -38) if point["recall"] >= 0.95 else (-25 if key == "baseline" else 14)
+                axes.annotate(f"{point['reviews']} reviews", (point["reviews"], point["recall"]),
+                              xytext=(-8 if right_edge else 8, y_offset),
+                              ha="right" if right_edge else "left", textcoords="offset points", color=color)
+            axes.legend(loc="lower right")
+        else:
+            axes.text(0.5, 0.5, "No positives: recall/workload undefined", ha="center", transform=axes.transAxes)
+        scope = "Future events (PRIMARY)" if item["scope"] == "future" else "All events (SUPPLEMENTARY)"
+        note = " | <20 positives: directional only" if item["reference_only"] else ""
+        axes.set_title(f"{scope}\n{item['events']} events, {item['positive_events']} Critical{note}")
+        axes.set_xlabel("Events reviewed")
+        axes.yaxis.set_major_formatter(PercentFormatter(1))
+        axes.set_ylim(-0.02, 1.06)
+        axes.set_xlim(0, max(1, item["events"]))
+        axes.grid(alpha=0.2)
+    panels[0].set_ylabel("Recall of final Critical events")
+    split = "Validation (development only)" if report["split"] == "validation" else "Holdout"
+    figure.suptitle(f"{split} | final_tier = Critical | target recall {report['target_recall']:.0%}")
     figure.tight_layout()
     figure.savefig(path, dpi=170)
     plt.close(figure)
 
 
-def _markdown(report):
+def _scope_markdown(report):
     p = report["positive_events"]
     base, model = report["baseline"], report["model"]
-    title = "验证集复核量分析（开发结果）" if report["split"] == "validation" else "留出集复核量分析"
-    lines = [f"# {title}", "", f"输入：`{report['source_file']}`。共 {report['events']} 个事件，{p} 个真实高风险事件。", "",
-             f"高风险定义：`{report['positive_definition']}`；只看 Pc 标签，不把距离规则算成模型效果。", ""]
+    title = "主结果：有后续消息的事件" if report["scope"] == "future" else "补充结果：全部事件"
+    lines = [f"## {title}", "", f"范围：`{report['scope_definition']}`；{report['events']} 个事件，{p} 个最终 Critical 事件。", ""]
     if p:
         lines += [f"召回目标 {report['target_recall']:.0%}：至少找到 {report['target_positive_events']} / {p} 个高风险事件。", "",
                   "| 排序方式 | 需复核事件数 | 找到的高风险事件数 | 漏报数 | 实际召回率 |",
                   "| --- | ---: | ---: | ---: | ---: |",
-                  f"| 最新 risk 基线 | {base['reviews']} | {base['true_positives']} | {base['missed_events']} | {base['recall']:.1%} |",
-                  f"| 分类器 alert_score | {model['reviews']} | {model['true_positives']} | {model['missed_events']} | {model['recall']:.1%} |", ""]
+                  f"| 输入文件 baseline_score | {base['reviews']} | {base['true_positives']} | {base['missed_events']} | {base['recall']:.1%} |",
+                  f"| 模型 alert_score | {model['reviews']} | {model['true_positives']} | {model['missed_events']} | {model['recall']:.1%} |", ""]
         reduction = report["review_reduction_fraction"]
         direction = "减少" if reduction >= 0 else "增加"
         lines += [f"模型相对基线的复核量**{direction} {abs(reduction):.1%}**。", "",
@@ -219,14 +257,24 @@ def _markdown(report):
     if boot["ci95_lower"] is not None and boot["ci95_lower"] <= 0 <= boot["ci95_upper"]:
         lines += ["区间跨过 0，不能据此断言模型稳定减少或增加了复核量。", ""]
     lines += [f"- {warning}" for warning in report["warnings"]]
-    lines += ["", "这是对已知标签的事后排序评估；不能用它承诺未标注数据也达到相同召回率。验证集结果用于开发，最终效果需在模型和规则固定后用留出集确认。", "",
+    return lines + [""]
+
+
+def _markdown(report):
+    title = "验证集复核量分析（开发结果）" if report["split"] == "validation" else "留出集复核量分析"
+    lines = [f"# {title}", "", f"输入：`{report['source_file']}`，共 {report['input_events']} 个事件。", "",
+             "目标为 `final_tier == 'Critical'`；直接使用 A 输出的最终等级标签，不按 Pc 阈值或输入距离重新推导真值。", "",
+             "主结果只评估 has_future=True；全部事件另列为补充，避免把标签已知的事件混入主结果。两种排序直接使用文件中的 baseline_score 和 alert_score。", ""]
+    lines += _scope_markdown(report) + _scope_markdown(report["supplementary_all"])
+    boot = report["bootstrap"]
+    lines += ["这是对已知标签的事后排序评估；不能用它承诺未标注数据也达到相同召回率。验证集结果用于开发，最终效果需在模型和规则固定后用留出集确认。", "",
               "不根据这份结果重抽事件切分、选择更好看的种子或调整留出集。脚本不训练模型、不读取原始数据和其他预测文件。", "",
               f"输入文件 SHA256：`{report['source_sha256']}`。", "",
               "## 复现命令", "", "在项目根目录、安装了 pandas、NumPy、Matplotlib 的 Python 环境中运行：", "",
               "```powershell",
-              f"python evaluate_workload.py --predictions \"{report['source_file']}\" --split {report['split']} --target-recall {report['target_recall']} --positive-threshold {report['positive_threshold']} --bootstrap {boot['iterations']} --seed {boot['seed']}",
+              f"python evaluate_workload.py --predictions \"{report['source_file']}\" --split {report['split']} --target-recall {report['target_recall']} --bootstrap {boot['iterations']} --seed {boot['seed']}",
               "```", "",
-              "JSON 用于页面指标，`_curve.csv` 用于交互曲线，`_curve.png` 可直接展示，本文可交给 A/B 核对结论。验证集产物必须标注为开发结果。", ""]
+              "JSON 顶层指标是主结果，supplementary_all 为补充结果；读取 `_curve.csv` 必须按 scope=future/all 分组，不能把两组曲线连成一条。`_curve.png` 分两栏展示。验证集产物必须标注为开发结果。", ""]
     return "\n".join(lines)
 
 
@@ -235,7 +283,6 @@ def main():
     parser.add_argument("--predictions", required=True)
     parser.add_argument("--split", choices=["validation", "holdout"])
     parser.add_argument("--target-recall", type=float, default=0.9)
-    parser.add_argument("--positive-threshold", type=float, default=-6.0)
     parser.add_argument("--bootstrap", type=int, default=1000)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output", help="JSON 输出；同时生成同名 .md、_curve.csv 和 _curve.png")
@@ -255,7 +302,7 @@ def main():
     if source.resolve() in {output.resolve(), output.with_suffix(".md").resolve(), curves_path.resolve(), image_path.resolve()}:
         parser.error("输出不能覆盖输入预测文件")
     frame = pd.read_csv(source)
-    report, curves = evaluate_workload(frame, args.target_recall, args.positive_threshold, args.bootstrap, args.seed)
+    report, curves = evaluate_workload(frame, args.target_recall, args.bootstrap, args.seed)
     report.update(split=split, purpose="development_only" if split == "validation" else "final_evaluation",
                   source_file=str(source), source_sha256=hashlib.sha256(source.read_bytes()).hexdigest())
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -263,7 +310,7 @@ def main():
     curves.to_csv(curves_path, index=False)
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")
     output.with_suffix(".md").write_text(_markdown(report), encoding="utf-8")
-    print(f"Events: {report['events']}; positives: {report['positive_events']}; target recall: {args.target_recall:.0%}")
+    print(f"Primary has_future=True: {report['events']} events; Critical: {report['positive_events']}; target recall: {args.target_recall:.0%}")
     print(f"Reviews: baseline={report['baseline']['reviews']}, model={report['model']['reviews']}")
     print(f"Report: {output}; curve: {image_path}")
 
