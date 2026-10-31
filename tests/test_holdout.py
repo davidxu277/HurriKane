@@ -24,10 +24,11 @@ def fixed(tmp_path, monkeypatch):
     return tmp_path
 
 
-def run_holdout(root, monkeypatch, reports='holdout_reports'):
-    (root / reports).mkdir(exist_ok=True)
+def run_holdout(root, monkeypatch, reports='holdout_reports', look=None):
     argv = ['evaluate_holdout.py', '--train', str(root / 'train.csv'), '--models', str(root / 'models'),
             '--split', str(root / 'trained_reports' / 'split_events.json'), '--reports', str(root / reports)]
+    if look:
+        argv += ['--look', look]
     monkeypatch.setattr(sys, 'argv', argv)
     evaluate_holdout.main()
 
@@ -102,3 +103,46 @@ def test_stale_rule_is_applied_to_old_latest_messages(fixed, monkeypatch):
     stale = predictions[predictions['event_id'] % 7 == 0]
     assert len(stale) > 0
     assert (stale['predicted_final_tier'] == stale['current_tier']).all()
+
+
+def test_second_look_writes_separately_and_is_labelled(fixed, monkeypatch):
+    run_holdout(fixed, monkeypatch)
+    first = (fixed / 'holdout_reports' / 'holdout_metrics.json').read_bytes()
+    run_holdout(fixed, monkeypatch, reports='holdout_reports/second_look', look='second')
+    second = json.loads((fixed / 'holdout_reports' / 'second_look' / 'holdout_metrics.json').read_text(encoding='utf-8'))
+    assert second['look'] == 'second'
+    assert (fixed / 'holdout_reports' / 'holdout_metrics.json').read_bytes() == first
+
+
+def test_first_look_is_labelled(fixed, monkeypatch):
+    run_holdout(fixed, monkeypatch)
+    metrics = json.loads((fixed / 'holdout_reports' / 'holdout_metrics.json').read_text(encoding='utf-8'))
+    assert metrics['look'] == 'first'
+
+
+def test_final_variant_matches_training_pipeline(tmp_path, monkeypatch):
+    csv_path = tmp_path / 'train.csv'
+    synthetic_messages().to_csv(csv_path, index=False)
+    run_training(monkeypatch, csv_path, tmp_path / 'models', tmp_path / 'trained_reports',
+                 '--variant', 'E', '--evaluate-holdout')
+    run_holdout(tmp_path, monkeypatch)
+    ours = pd.read_csv(tmp_path / 'holdout_reports' / 'holdout_predictions.csv')
+    pipeline = pd.read_csv(tmp_path / 'trained_reports' / 'holdout_predictions.csv')
+    pd.testing.assert_frame_equal(ours, pipeline)
+
+
+def test_third_look_is_labelled(fixed, monkeypatch):
+    run_holdout(fixed, monkeypatch, reports='holdout_reports/third_look', look='third')
+    metrics = json.loads((fixed / 'holdout_reports' / 'third_look' / 'holdout_metrics.json').read_text(encoding='utf-8'))
+    assert metrics['look'] == 'third'
+
+
+def test_stale_final_variant_matches_training_pipeline(tmp_path, monkeypatch):
+    csv_path = tmp_path / 'train.csv'
+    synthetic_messages().to_csv(csv_path, index=False)
+    run_training(monkeypatch, csv_path, tmp_path / 'models', tmp_path / 'trained_reports',
+                 '--variant', 'E_stale', '--evaluate-holdout')
+    run_holdout(tmp_path, monkeypatch)
+    ours = pd.read_csv(tmp_path / 'holdout_reports' / 'holdout_predictions.csv')
+    pipeline = pd.read_csv(tmp_path / 'trained_reports' / 'holdout_predictions.csv')
+    pd.testing.assert_frame_equal(ours, pipeline)

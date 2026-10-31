@@ -15,8 +15,8 @@ from catboost import CatBoostClassifier, CatBoostRegressor, Pool
 from sklearn.model_selection import train_test_split
 
 from ml import (
-    CATEGORICAL_FEATURES, TIERS, alert_scores, apply_stale_rule, build_samples, combine_predictions,
-    feature_columns, guard_conservative, load_bundle, predict_batch, predicted_tiers, tier_probabilities,
+    CATEGORICAL_FEATURES, TIERS, alert_scores, build_samples, combine_predictions, feature_columns,
+    final_tiers, guard_conservative, load_bundle, predict_batch, tier_probabilities,
 )
 from validation import validate_input
 
@@ -33,17 +33,22 @@ STALE_DAYS = 3.0            # 最新消息早于这个时间，就直接沿用�
 SEED = 42
 TASK = 'final'
 
-# 名称：(历史特征, 当前等级兜底, 训练时包含没有后续消息的事件, 时间规则)，按从简单到复杂排列
+# 名称：(历史特征, 当前等级兜底, 训练时包含没有后续消息的事件, 时间规则, 物理特征和调参)，按从简单到复杂排列
 VARIANTS = {
-    'B': (False, False, False, False),
-    'C': (False, True, False, False),
-    'D': (True, True, False, False),
-    'D_all_events': (True, True, True, False),
-    'D_stale': (True, True, False, True),
-    'D_all_events_stale': (True, True, True, True),
+    'B': (False, False, False, False, False),
+    'C': (False, True, False, False, False),
+    'D': (True, True, False, False, False),
+    'D_all_events': (True, True, True, False, False),
+    'D_stale': (True, True, False, True, False),
+    'D_all_events_stale': (True, True, True, True, False),
+    'E': (True, True, False, False, True),
+    'E_stale': (True, True, False, True, True),
 }
+# 三级调参选出的参数，只用训练集和验证集的交叉验证
+TUNED_PARAMS = {'depth': 7, 'learning_rate': 0.0652, 'l2_leaf_reg': 6.7, 'rsm': 0.76}
+TUNED_ITERATIONS = 300
 SELECTION_MEASURES = ('critical_true_positives', 'accuracy_future', 'accuracy_all')
-FINAL_VARIANT = 'D_stale'    # 团队看过验证集比较后选定：两种准确率和复核量都优于基线
+FINAL_VARIANT = 'E'          # 物理特征、调参和当前等级兜底；E_stale 未通过第三次留出集标准
 
 PREDICTION_COLUMNS = [
     'event_id', 'y_true', 'final_tier', 'has_future', 'current_tier', 'predicted_final_tier',
@@ -243,13 +248,16 @@ def fit_regressor(loss, pool, eval_pool, iterations):
     return model.fit(pool, eval_set=eval_pool, early_stopping_rounds=50)
 
 
-def fit_classifier(train, validation, features, iterations):
-    model = CatBoostClassifier(
-        iterations=iterations, depth=6, learning_rate=0.05, loss_function='MultiClass',
-        random_seed=SEED, verbose=False, allow_writing_files=False,
-    )
+def fit_classifier(train, validation, features, iterations, params=None):
     cats = categorical_in(features)
     pool = Pool(train[features], train['final_tier'], cat_features=cats)
+    settings = {'iterations': iterations, 'depth': 6, 'learning_rate': 0.05}
+    if params:
+        settings = {**params, 'iterations': min(iterations, TUNED_ITERATIONS)}
+    model = CatBoostClassifier(loss_function='MultiClass', random_seed=SEED, verbose=False,
+                               allow_writing_files=False, **settings)
+    if params:
+        return model.fit(pool)       # 调参时用固定迭代次数，这里保持一致
     eval_pool = Pool(validation[features], validation['final_tier'], cat_features=cats)
     return model.fit(pool, eval_set=eval_pool, early_stopping_rounds=50)
 
@@ -274,23 +282,24 @@ def compare_variants(train_all, train, validation, rates, iterations, variant='a
         }
 
     fitted, results = {}, {}
-    for name, (history, fallback, all_events, stale) in VARIANTS.items():
-        features = feature_columns(TASK, history=history)
-        if (history, all_events) not in fitted:
-            fitted[(history, all_events)] = fit_classifier(
-                train_all if all_events else train, validation[future], features, iterations
-            )
-        probabilities = tier_probabilities(fitted[(history, all_events)], validation[features])
-        scores = alert_scores(probabilities['Critical'], validation['current_tier'], rates if fallback else None)
-        threshold = recall_at_fpr(positive, scores[future], baseline_fpr)['threshold']
-        predicted = apply_stale_rule(predicted_tiers(probabilities, scores, threshold), current,
-                                     validation['time_to_tca'], STALE_DAYS if stale else None)
-        results[name] = summary(scores[future], predicted)
+    for name, (history, fallback, all_events, stale, physics) in VARIANTS.items():
+        features = feature_columns(TASK, history=history, physics=physics)
+        key = (history, all_events, physics)
+        if key not in fitted:
+            fitted[key] = fit_classifier(train_all if all_events else train, validation[future], features,
+                                         iterations, TUNED_PARAMS if physics else None)
+        probabilities = tier_probabilities(fitted[key], validation[features])
+        used_rates = rates if fallback else None
+        scores = alert_scores(probabilities['Critical'], validation['current_tier'], used_rates)
+        threshold = None if physics else recall_at_fpr(positive, scores[future], baseline_fpr)['threshold']
+        predicted = final_tiers(probabilities, scores, current, validation['time_to_tca'], used_rates, threshold,
+                                STALE_DAYS if stale else None)
+        results[name] = {**summary(scores[future], predicted), 'critical_threshold': threshold}
 
     chosen = choose_variant(results) if variant == 'auto' else variant
-    history, _, all_events, _ = VARIANTS[chosen]
+    history, _, all_events, _, physics = VARIANTS[chosen]
     baseline = summary(validation['baseline_score'].to_numpy()[future], current)
-    return chosen, fitted[(history, all_events)], {'baseline': baseline, **results}
+    return chosen, fitted[(history, all_events, physics)], {'baseline': baseline, **results}
 
 
 def main():
@@ -331,9 +340,9 @@ def main():
     variant, classifier, variant_report = compare_variants(
         train_all, train, parts['validation'], rates, args.iterations, args.variant
     )
-    history, fallback, _, stale = VARIANTS[variant]
+    history, fallback, _, stale, physics = VARIANTS[variant]
     stale_days = STALE_DAYS if stale else None
-    features = feature_columns(TASK, history=history)
+    features = feature_columns(TASK, history=history, physics=physics)
     used_rates = rates if fallback else None
     print(f'选定方案 {variant}')
 
@@ -376,7 +385,7 @@ def main():
         'units': {'time_to_tca': 'days', 'miss_distance': 'm', 'relative_speed': 'm/s'},
         'target_floor': TARGET_FLOOR,
         'critical_rates': used_rates,
-        'critical_threshold': variant_report[variant]['threshold'],
+        'critical_threshold': variant_report[variant]['critical_threshold'],
         'stale_days': stale_days,
         'split_seed': SEED,
         'alpha': alpha,

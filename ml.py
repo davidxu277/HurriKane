@@ -18,12 +18,20 @@ FINAL_EXTRA_FEATURES = ['risk', 'risk_delta', 'miss_distance_delta', 'message_co
 HISTORY_FEATURES = [
     'risk_max', 'risk_std', 'risk_slope', 'miss_distance_min', 'miss_distance_slope', 'c_sigma_r_delta',
 ]
+PHYSICS_FEATURES = [
+    'sigma_total_r', 'z_r', 'sigma_total_t', 'z_t', 'sigma_total_n', 'z_n',
+    'log_miss', 'margin_1k', 'margin_5k', 'margin_1k_sigma', 'margin_5k_sigma',
+    'projected_miss', 'p_within_1k', 'p_within_5k',
+]
 CATEGORICAL_FEATURES = ['c_object_type', 'current_tier']
+# 固定噪声，保证同一事件在任何批次里的物理特征都相同
+POSITION_NOISE = np.random.default_rng(42).standard_normal((3, 400))
 
 
-def feature_columns(task, history=False):
+def feature_columns(task, history=False, physics=False):
     if task == 'final':
-        return BASE_FEATURES + FINAL_EXTRA_FEATURES + (HISTORY_FEATURES if history else [])
+        return (BASE_FEATURES + FINAL_EXTRA_FEATURES + (HISTORY_FEATURES if history else [])
+                + (PHYSICS_FEATURES if physics else []))
     if task == 'current':
         return list(BASE_FEATURES)
     raise ValueError(f'未知任务口径：{task}')
@@ -86,6 +94,7 @@ def _final_samples(df, horizon_days, labeled):
     inputs['miss_distance_slope'] = _slope(inputs, 'miss_distance')
 
     samples = inputs.groupby('event_id').tail(1).copy()
+    samples = pd.concat([samples, _physics(samples)], axis=1)
     samples['current_tier'] = risk_tier(samples['risk'], samples['miss_distance'])
     samples['baseline_score'] = _baseline_score(samples)
     samples['known_log10_pc'] = samples['risk']
@@ -101,6 +110,39 @@ def _final_samples(df, horizon_days, labeled):
     return samples
 
 
+def _optional(samples, column):
+    if column in samples:
+        return samples[column].astype(float)
+    return pd.Series(np.nan, index=samples.index, dtype=float)
+
+
+def _physics(samples):
+    """按输入消息的位置和不确定性推算距离，全部是决策时已知的信息。"""
+    sigmas = {axis: np.sqrt(_optional(samples, f't_sigma_{axis}') ** 2 + _optional(samples, f'c_sigma_{axis}') ** 2)
+              for axis in 'rtn'}
+    positions = {axis: samples[f'relative_position_{axis}'] for axis in 'rtn'}
+    miss = samples['miss_distance']
+    total = np.sqrt(sum(sigma ** 2 for sigma in sigmas.values()))
+
+    features = {}
+    for axis in 'rtn':
+        features[f'sigma_total_{axis}'] = sigmas[axis]
+        features[f'z_{axis}'] = positions[axis] / sigmas[axis]
+    features['log_miss'] = np.log10(miss.clip(lower=1))
+    features['margin_1k'] = miss - 1000
+    features['margin_5k'] = miss - 5000
+    features['margin_1k_sigma'] = (miss - 1000) / total
+    features['margin_5k_sigma'] = (miss - 5000) / total
+    features['projected_miss'] = miss + samples['miss_distance_slope'] * samples['time_to_tca']
+
+    centre = np.stack([positions[axis].fillna(0).to_numpy() for axis in 'rtn'], axis=1)[:, :, None]
+    spread = np.stack([sigmas[axis].fillna(0).to_numpy() for axis in 'rtn'], axis=1)[:, :, None]
+    distances = np.sqrt(((centre + spread * POSITION_NOISE) ** 2).sum(axis=1))
+    features['p_within_1k'] = (distances < 1000).mean(axis=1)
+    features['p_within_5k'] = (distances < 5000).mean(axis=1)
+    return pd.DataFrame(features, index=samples.index)
+
+
 def _slope(inputs, column):
     """每个事件的线性趋势：朝 TCA 每过一天，column 变化多少。"""
     events = inputs['event_id']
@@ -114,7 +156,7 @@ def _slope(inputs, column):
 
 def _baseline_score(samples):
     # 基线排序：先按当前等级，同级距离越近越靠前
-    rank = samples['current_tier'].map({tier: index for index, tier in enumerate(TIERS)})
+    rank = samples['current_tier'].map({tier: index for index, tier in enumerate(TIERS)}).astype(float)
     return rank + 1 / (1 + samples['miss_distance'] / 1000)
 
 
@@ -141,8 +183,13 @@ def alert_scores(p_critical, current_tier, critical_rates):
 
 
 def predicted_tiers(probabilities, alert_score, critical_threshold):
+    """有阈值时按告警分数判 Critical；没有阈值时取概率最高的等级。"""
     lower = np.where(probabilities['Elevated'] > probabilities['Safe'], 'Elevated', 'Safe')
-    return np.where(np.asarray(alert_score) > critical_threshold, 'Critical', lower)
+    if critical_threshold is None:
+        critical = probabilities['Critical'] >= probabilities[['Safe', 'Elevated']].max(axis=1)
+    else:
+        critical = np.asarray(alert_score) > critical_threshold
+    return np.where(critical, 'Critical', lower)
 
 
 def apply_stale_rule(predicted, current_tier, time_to_tca, stale_days):
@@ -150,6 +197,13 @@ def apply_stale_rule(predicted, current_tier, time_to_tca, stale_days):
     if stale_days is None:
         return predicted
     return np.where(np.asarray(time_to_tca) >= stale_days, np.asarray(current_tier), predicted)
+
+
+def final_tiers(probabilities, alert, current_tier, time_to_tca, critical_rates, critical_threshold, stale_days):
+    predicted = predicted_tiers(probabilities, alert, critical_threshold)
+    if critical_threshold is None and critical_rates is not None:
+        predicted = np.where(np.asarray(current_tier) == 'Critical', 'Critical', predicted)
+    return apply_stale_rule(predicted, current_tier, time_to_tca, stale_days)
 
 
 def tier_probabilities(model, features):
@@ -165,8 +219,8 @@ def combine_predictions(samples, estimate, conservative, probabilities, critical
     known = samples['known_log10_pc'].to_numpy(dtype=float)
     tier = np.where(np.isnan(known), predicted, known)
     alert = alert_scores(probabilities['Critical'], samples['current_tier'], critical_rates)
-    final_tier = apply_stale_rule(predicted_tiers(probabilities, alert, critical_threshold),
-                                  samples['current_tier'], samples['time_to_tca'], stale_days)
+    final_tier = final_tiers(probabilities, alert, samples['current_tier'], samples['time_to_tca'],
+                             critical_rates, critical_threshold, stale_days)
     return pd.DataFrame({
         'input_record_id': samples['input_record_id'].to_numpy(),
         'event_id': samples['event_id'].to_numpy(),

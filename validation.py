@@ -16,6 +16,9 @@ DERIVED_FEATURES = {
     "risk_delta", "miss_distance_delta", "message_count", "current_tier",
     "risk_max", "risk_std", "risk_slope", "miss_distance_min",
     "miss_distance_slope", "c_sigma_r_delta",
+    "sigma_total_r", "z_r", "sigma_total_t", "z_t", "sigma_total_n", "z_n",
+    "log_miss", "margin_1k", "margin_5k", "margin_1k_sigma", "margin_5k_sigma",
+    "projected_miss", "p_within_1k", "p_within_5k",
 }
 ISSUE_COLUMNS = [
     "input_record_id", "row_position", "event_id", "column", "code",

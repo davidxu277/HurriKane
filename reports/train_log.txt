@@ -1,4 +1,4 @@
 原始 162634 行、13154 个事件 -> 样本 11942 个，其中有后续消息 8892 个
-选定方案 D_stale
+选定方案 E
 选定 alpha=0.9（比较标签 y >= -6.0）
-完成，结果在 reports/metrics.json
+完成，结果在 reports_push/metrics.json

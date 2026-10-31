@@ -1,7 +1,7 @@
 {
   "task": "final",
   "target": "final_tier",
-  "variant": "D_stale",
+  "variant": "E",
   "features": [
     "time_to_tca",
     "miss_distance",
@@ -25,7 +25,21 @@
     "risk_slope",
     "miss_distance_min",
     "miss_distance_slope",
-    "c_sigma_r_delta"
+    "c_sigma_r_delta",
+    "sigma_total_r",
+    "z_r",
+    "sigma_total_t",
+    "z_t",
+    "sigma_total_n",
+    "z_n",
+    "log_miss",
+    "margin_1k",
+    "margin_5k",
+    "margin_1k_sigma",
+    "margin_5k_sigma",
+    "projected_miss",
+    "p_within_1k",
+    "p_within_5k"
   ],
   "categorical_features": [
     "c_object_type",
@@ -44,8 +58,8 @@
     "Elevated": 0.060240963855421686,
     "Critical": 0.7927710843373494
   },
-  "critical_threshold": 0.5481451801427816,
-  "stale_days": 3.0,
+  "critical_threshold": null,
+  "stale_days": null,
   "split_seed": 42,
   "alpha": 0.9,
   "selection_level": -6.0,
@@ -57,5 +71,5 @@
     "holdout": 1792
   },
   "training_events": 6224,
-  "model_version": "20261031-054344"
+  "model_version": "20261031-064613"
 }

@@ -48,9 +48,12 @@ def main():
     parser.add_argument('--models', default='models')
     parser.add_argument('--split', default='reports/split_events.json')
     parser.add_argument('--reports', default='reports')
+    parser.add_argument('--look', choices=['first', 'second', 'third'], default='first',
+                        help='第几次查看留出集；之后的查看要写到单独的目录并标注')
     args = parser.parse_args()
 
     reports_dir = Path(args.reports)
+    reports_dir.mkdir(parents=True, exist_ok=True)
     predictions_path = reports_dir / 'holdout_predictions.csv'
     if predictions_path.exists():
         raise SystemExit(f'{predictions_path} 已存在：留出集只评估一次，不重跑')
@@ -62,6 +65,7 @@ def main():
 
     predictions[PREDICTION_COLUMNS].to_csv(predictions_path, index=False)
     metrics = {
+        'look': args.look,
         'variant': bundle['metadata']['variant'],
         'model_version': bundle['metadata']['model_version'],
         'tiers': {'future': report(predictions[predictions['has_future']]), 'all': report(predictions)},

@@ -312,3 +312,98 @@ def test_combined_output_applies_stale_rule():
     result = combine_predictions(samples, [-5.0], [-4.0], probabilities(0.1, 0.1, 0.8), None, 0.4, 3.0).iloc[0]
     assert result['current_tier'] == 'Safe'
     assert result['predicted_final_tier'] == 'Safe'
+
+
+def sigma_message(event_id, time_to_tca, risk, miss, sigma=0.0, position=None, **overrides):
+    r, t, n = position if position is not None else (0.0, miss, 0.0)
+    values = {'relative_position_r': r, 'relative_position_t': t, 'relative_position_n': n,
+              't_sigma_r': sigma, 'c_sigma_r': sigma, 't_sigma_t': sigma, 'c_sigma_t': sigma,
+              't_sigma_n': sigma, 'c_sigma_n': sigma}
+    values.update(overrides)
+    return message(event_id, time_to_tca, risk, miss, **values)
+
+
+def test_physics_columns_are_optional_in_feature_list():
+    assert 'p_within_1k' in feature_columns('final', history=True, physics=True)
+    assert 'p_within_1k' not in feature_columns('final', history=True)
+
+
+def test_physics_features_ignore_messages_after_cutoff():
+    changed = typical_event()
+    changed.loc[changed['time_to_tca'] == 1.5, ['risk', 'miss_distance']] = [-1.0, 1.0]
+    columns = feature_columns('final', history=True, physics=True)
+    original = build_samples(typical_event(), 'final', 2.0)[columns]
+    assert build_samples(changed, 'final', 2.0)[columns].equals(original)
+
+
+def test_physics_scales_position_by_combined_sigma():
+    df = pd.DataFrame([sigma_message(1, 3.0, -9.0, 2000.0, t_sigma_t=300.0, c_sigma_t=400.0)])
+    sample = build_samples(df, 'final', 2.0, labeled=False).iloc[0]
+    assert sample['sigma_total_t'] == 500.0
+    assert sample['z_t'] == 4.0
+    assert sample['margin_1k'] == 1000.0
+    assert sample['log_miss'] == pytest.approx(math.log10(2000))
+
+
+def test_projected_miss_extends_trend_to_tca():
+    df = pd.DataFrame([message(1, 3.0, -9.0, 7000.0), message(1, 2.5, -9.0, 6000.0)])
+    assert build_samples(df, 'final', 2.0, labeled=False).iloc[0]['projected_miss'] == 1000.0
+
+
+def test_within_distance_is_certain_without_uncertainty():
+    df = pd.DataFrame([sigma_message(1, 3.0, -9.0, 500.0), sigma_message(2, 3.0, -9.0, 2000.0)])
+    samples = build_samples(df, 'final', 2.0, labeled=False).set_index('event_id')
+    assert samples.loc[1, 'p_within_1k'] == 1.0
+    assert samples.loc[2, 'p_within_1k'] == 0.0
+    assert samples.loc[2, 'p_within_5k'] == 1.0
+
+
+def test_within_distance_is_partial_with_large_uncertainty():
+    df = pd.DataFrame([sigma_message(1, 3.0, -9.0, 1000.0, sigma=500.0)])
+    probability = build_samples(df, 'final', 2.0, labeled=False).iloc[0]['p_within_1k']
+    assert 0.0 < probability < 1.0
+
+
+def test_physics_values_do_not_depend_on_other_events_in_batch():
+    target = sigma_message(5, 3.0, -9.0, 1500.0, sigma=600.0)
+    alone = build_samples(pd.DataFrame([target]), 'final', 2.0, labeled=False).iloc[0]
+    others = [sigma_message(i, 3.0, -9.0, 3000.0, sigma=900.0) for i in (1, 2, 3, 7, 8)]
+    batch = build_samples(pd.DataFrame([*others, target]), 'final', 2.0, labeled=False).set_index('event_id')
+    assert batch.loc[5, 'p_within_1k'] == alone['p_within_1k']
+    assert batch.loc[5, 'p_within_5k'] == alone['p_within_5k']
+
+
+def test_missing_transverse_sigma_columns_stay_unknown():
+    sample = build_samples(typical_event(), 'final', 2.0).iloc[0]
+    assert math.isnan(sample['sigma_total_t'])
+    assert math.isnan(sample['z_t'])
+
+
+def test_without_threshold_tier_comes_from_most_likely_class():
+    assert predicted_tiers(probabilities(0.1, 0.2, 0.7), np.array([0.7]), None)[0] == 'Critical'
+    assert predicted_tiers(probabilities(0.5, 0.3, 0.2), np.array([0.2]), None)[0] == 'Safe'
+    assert predicted_tiers(probabilities(0.3, 0.5, 0.2), np.array([0.2]), None)[0] == 'Elevated'
+
+
+def test_fallback_without_threshold_keeps_currently_critical_event():
+    df = pd.DataFrame([message(1, 3.0, -9.0, 500.0), message(1, 0.5, -7.0)])
+    samples = build_samples(df, 'final', 2.0)
+    rates = {'Critical': 0.8, 'Elevated': 0.05, 'Safe': 0.0}
+    result = combine_predictions(samples, [-5.0], [-4.0], probabilities(0.9, 0.05, 0.05), rates, None).iloc[0]
+    assert result['predicted_final_tier'] == 'Critical'
+
+
+def test_no_fallback_without_threshold_can_lower_currently_critical_event():
+    df = pd.DataFrame([message(1, 3.0, -9.0, 500.0), message(1, 0.5, -7.0)])
+    samples = build_samples(df, 'final', 2.0)
+    result = combine_predictions(samples, [-5.0], [-4.0], probabilities(0.9, 0.05, 0.05), None, None).iloc[0]
+    assert result['predicted_final_tier'] == 'Safe'
+
+
+def test_fallback_without_threshold_lets_model_raise_other_events():
+    df = pd.DataFrame([message(1, 3.0, -9.0, 9000.0), message(1, 0.5, -7.0)])
+    samples = build_samples(df, 'final', 2.0)
+    rates = {'Critical': 0.8, 'Elevated': 0.05, 'Safe': 0.0}
+    result = combine_predictions(samples, [-5.0], [-4.0], probabilities(0.1, 0.1, 0.8), rates, None).iloc[0]
+    assert result['current_tier'] == 'Safe'
+    assert result['predicted_final_tier'] == 'Critical'

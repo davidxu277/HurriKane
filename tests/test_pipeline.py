@@ -286,7 +286,7 @@ def compare_with_always_safe(monkeypatch):
     future = samples[samples['has_future']]
     fitted_on = []
 
-    def fit(train_frame, validation, features, iterations):
+    def fit(train_frame, validation, features, iterations, params=None):
         fitted_on.append(len(train_frame))
         return AlwaysSafe()
 
@@ -321,9 +321,11 @@ def test_default_training_uses_the_team_final_variant(tmp_path, monkeypatch):
                                       '--models', str(tmp_path / 'models'), '--reports', str(tmp_path / 'reports')])
     train.main()
     metadata = load_bundle(tmp_path / 'models')['metadata']
-    assert metadata['variant'] == 'D_stale'
-    assert metadata['stale_days'] == train.STALE_DAYS
+    assert metadata['variant'] == 'E'
+    assert metadata['stale_days'] is None
+    assert metadata['critical_threshold'] is None
     assert 'risk_slope' in metadata['features']
+    assert 'p_within_1k' in metadata['features']
     assert metadata['critical_rates'] is not None
 
 
@@ -333,3 +335,38 @@ def test_named_variant_overrides_the_automatic_choice(tmp_path, monkeypatch):
     monkeypatch.setattr(train, 'choose_variant', lambda results: 'B')
     run_training(monkeypatch, csv_path, tmp_path / 'models', tmp_path / 'reports', '--variant', 'C')
     assert load_bundle(tmp_path / 'models')['metadata']['variant'] == 'C'
+    assert 'p_within_1k' not in load_bundle(tmp_path / 'models')['metadata']['features']
+
+
+def test_final_variant_uses_tuned_classifier_settings(tmp_path, monkeypatch):
+    csv_path = tmp_path / 'train.csv'
+    synthetic_messages().to_csv(csv_path, index=False)
+    run_training(monkeypatch, csv_path, tmp_path / 'models', tmp_path / 'reports', '--variant', 'E')
+    settings = load_bundle(tmp_path / 'models')['classifier'].get_all_params()
+    assert settings['depth'] == train.TUNED_PARAMS['depth']
+    assert settings['learning_rate'] == pytest.approx(train.TUNED_PARAMS['learning_rate'])
+    assert settings['l2_leaf_reg'] == pytest.approx(train.TUNED_PARAMS['l2_leaf_reg'])
+
+
+def test_saved_final_metadata_passes_validation_and_predicts(tmp_path, monkeypatch):
+    csv_path = tmp_path / 'train.csv'
+    synthetic_messages().to_csv(csv_path, index=False)
+    run_training(monkeypatch, csv_path, tmp_path / 'models', tmp_path / 'reports', '--variant', 'E')
+    bundle = load_bundle(tmp_path / 'models')
+    frame = unlabeled_events()
+    valid, issues = validate_input(frame, bundle['metadata'])
+    assert issues.empty
+    result = predict_batch(valid, bundle)
+    assert sorted(result['event_id']) == [0, 1, 2, 3]
+    assert set(result['predicted_final_tier']) <= set(TIERS)
+
+
+def test_final_variant_keeps_current_tier_for_old_messages(tmp_path, monkeypatch):
+    csv_path = tmp_path / 'train.csv'
+    synthetic_messages().to_csv(csv_path, index=False)
+    run_training(monkeypatch, csv_path, tmp_path / 'models', tmp_path / 'reports', '--variant', 'E_stale')
+    bundle = load_bundle(tmp_path / 'models')
+    assert 'p_within_1k' in bundle['metadata']['features']
+    frame = unlabeled_events()
+    result = predict_batch(frame[frame['time_to_tca'] >= 3.0], bundle)
+    assert (result['predicted_final_tier'] == result['current_tier']).all()

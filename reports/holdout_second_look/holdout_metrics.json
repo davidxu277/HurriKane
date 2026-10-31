@@ -1,0 +1,135 @@
+{
+  "look": "second",
+  "variant": "E",
+  "model_version": "20261031-063722",
+  "tiers": {
+    "future": {
+      "events": 1335,
+      "accuracy": {
+        "baseline": 0.9161048689138577,
+        "model": 0.9250936329588015
+      },
+      "confusion": {
+        "Critical": {
+          "Critical": 73,
+          "Elevated": 13,
+          "Safe": 3
+        },
+        "Elevated": {
+          "Critical": 14,
+          "Elevated": 195,
+          "Safe": 44
+        },
+        "Safe": {
+          "Critical": 4,
+          "Elevated": 22,
+          "Safe": 967
+        }
+      },
+      "critical": {
+        "positive_events": 89,
+        "baseline_fpr": 0.014446227929373997,
+        "baseline": {
+          "precision": 0.8,
+          "recall": 0.8089887640449438,
+          "f2": 0.8071748878923766,
+          "true_positives": 72,
+          "false_positives": 18,
+          "false_negatives": 17
+        },
+        "model": {
+          "precision": 0.8021978021978022,
+          "recall": 0.8202247191011236,
+          "f2": 0.8165548098434003,
+          "true_positives": 73,
+          "false_positives": 18,
+          "false_negatives": 16
+        },
+        "matched": {
+          "baseline": {
+            "threshold": 1.4826254826254825,
+            "true_positives": 74,
+            "false_positives": 18,
+            "false_negatives": 15,
+            "recall": 0.8314606741573034
+          },
+          "model": {
+            "threshold": 0.44251910813470907,
+            "true_positives": 73,
+            "false_positives": 18,
+            "false_negatives": 16,
+            "recall": 0.8202247191011236
+          }
+        },
+        "review_for_90_recall": {
+          "baseline": 125,
+          "model": 125
+        }
+      }
+    },
+    "all": {
+      "events": 1792,
+      "accuracy": {
+        "baseline": 0.9375,
+        "model": 0.9241071428571429
+      },
+      "confusion": {
+        "Critical": {
+          "Critical": 109,
+          "Elevated": 13,
+          "Safe": 3
+        },
+        "Elevated": {
+          "Critical": 17,
+          "Elevated": 230,
+          "Safe": 77
+        },
+        "Safe": {
+          "Critical": 4,
+          "Elevated": 22,
+          "Safe": 1317
+        }
+      },
+      "critical": {
+        "positive_events": 125,
+        "baseline_fpr": 0.010797840431913617,
+        "baseline": {
+          "precision": 0.8571428571428571,
+          "recall": 0.864,
+          "f2": 0.8626198083067093,
+          "true_positives": 108,
+          "false_positives": 18,
+          "false_negatives": 17
+        },
+        "model": {
+          "precision": 0.8384615384615385,
+          "recall": 0.872,
+          "f2": 0.865079365079365,
+          "true_positives": 109,
+          "false_positives": 21,
+          "false_negatives": 16
+        },
+        "matched": {
+          "baseline": {
+            "threshold": 1.4952947003467063,
+            "true_positives": 108,
+            "false_positives": 18,
+            "false_negatives": 17,
+            "recall": 0.864
+          },
+          "model": {
+            "threshold": 0.650446558651339,
+            "true_positives": 108,
+            "false_positives": 18,
+            "false_negatives": 17,
+            "recall": 0.864
+          }
+        },
+        "review_for_90_recall": {
+          "baseline": 153,
+          "model": 150
+        }
+      }
+    }
+  }
+}
