@@ -1,5 +1,7 @@
 # 留出集正式复核与首次 GitHub 提交
 
+> 历史 GitHub 报告交付记录，不代表比赛平台的首次有效提交。当前主办方入口、首版冻结版本和候选替换流程以 [submission_plan.md](submission_plan.md) 为准。本文件既有留出统计未重算。
+
 日期：2026-10-31（Asia/Shanghai）。基于 `davidxu277/HurriKane` 的 main `77e1518`。
 冻结版本：`D_stale`，模型版本 `20261031-054344`。
 
