@@ -1,31 +1,31 @@
-# HurriKane — 卫星碰撞风险评估
+# HurriKane — Satellite Collision Risk Assessment
 
-Autonomous SG 2026 · Airbus Challenge #1 的 Python 实现。项目根据同一交会事件的历史消息，预测最终风险等级和 `log10(Pc)`，并提供输入校验、当前风险分级、证据不足提示和复核工作量分析。
+A Python implementation for Autonomous SG 2026 · Airbus Challenge #1. The project uses historical messages for each conjunction event to predict its final risk tier and `log10(Pc)`, with input validation, current risk grading, insufficient-evidence flags, and review workload analysis.
 
-本文描述当前仓库代码及随附模型，不再使用早期六小时开发计划。当前模型为 **`E`**，版本 **`20261031-064613`**，前端为 **ORBITGUARD** Streamlit 仪表盘。
+This README describes the current code and bundled models, replacing the early six-hour development plan. The current model is **`E`**, version **`20261031-064613`**, with the **ORBITGUARD** Streamlit dashboard.
 
-> **模型、阈值和事件切分已冻结，不再训练或评估留出集。** 留出集共查看 3 次，最终采用 E，详见 [最终模型记录](reports/final_model_summary.md)。比赛材料由负责提交的队友交接，见 [材料交接说明](reports/submission_plan.md)；GitHub 更新不代表比赛平台有效收件。
+> **Models, thresholds, and event splits are frozen. Do not retrain or evaluate the holdout again.** The holdout has been inspected 3 times, and E is the final selection; see the [final model record](reports/final_model_summary.md). Competition materials are handed over to the teammate responsible for submission; see the [submission handoff](reports/submission_plan.md). A GitHub update does not constitute a valid competition submission.
 
-## 1. 当前实现
+## 1. Current implementation
 
-- `validation.py`：检查原始消息，区分 ERROR 与 WARNING，保留问题位置和原因。
-- `ml.py`、`train.py`：构造事件样本，训练 CatBoost 模型，保存模型、验证预测和评估指标。
-- `service.py`：提供 `analyze_csv()`，串联校验、缓存模型推理、风险规则、历史消息和事件汇总。
-- `rules.py`：给出当前风险等级、触发原因及 `NEEDS_REVIEW` 标记。
-- `app.py`、`gui_*.py`：ORBITGUARD 页面，支持模拟演示、真实 CSV 分析、筛选、事件详情、风险历史、R/T/N 示意图和下载。
-- 评估脚本：保存预测的复核量曲线、配对 bootstrap 区间、证据规则审计及候选模型比较。历史训练、留出脚本保留用于追溯。
+- `validation.py`: validates raw messages, distinguishes ERROR from WARNING, and preserves issue locations and reasons.
+- `ml.py`, `train.py`: construct event samples, train CatBoost models, and save models, validation predictions, and metrics.
+- `service.py`: exposes `analyze_csv()`, combining validation, cached model inference, risk rules, history, and event summaries.
+- `rules.py`: assigns current risk levels, trigger reasons, and `NEEDS_REVIEW` flags.
+- `app.py`, `gui_*.py`: provide the ORBITGUARD dashboard with simulation, real CSV analysis, filters, event details, risk history, R/T/N schematics, and downloads.
+- Evaluation scripts: analyze review workload, paired bootstrap intervals, evidence rules, and candidate comparisons from saved predictions. Historical training and holdout scripts remain available for traceability.
 
-页面依赖见 [`requirements-gui.txt`](requirements-gui.txt)，前端接入细节见 [GUI 开发说明](GUI_DEVELOPMENT.md)。也可通过 Python 服务接口直接进行批量分析。
+Dashboard dependencies are listed in [`requirements-gui.txt`](requirements-gui.txt). See the [GUI development guide](GUI_DEVELOPMENT.md) for integration details. The Python service interface also supports direct batch analysis.
 
-## 2. 环境与数据
+## 2. Environment and data
 
-建议使用 Python 3.11 或 3.12，在仓库根目录执行命令。
+Use Python 3.11 or 3.12 and run commands from the repository root.
 
-Windows PowerShell：
+Windows PowerShell:
 
 ```powershell
-git clone https://github.com/stephen-118/Autonomous-SG-2026.git
-Set-Location Autonomous-SG-2026
+git clone https://github.com/davidxu277/HurriKane.git
+Set-Location HurriKane
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
@@ -33,11 +33,11 @@ python -m pip install -r requirements-gui.txt
 python -m pip install scikit-learn matplotlib pytest "pandas>=2.2,<2.4"
 ```
 
-macOS / Linux：
+macOS / Linux:
 
 ```bash
-git clone https://github.com/stephen-118/Autonomous-SG-2026.git
-cd Autonomous-SG-2026
+git clone https://github.com/davidxu277/HurriKane.git
+cd HurriKane
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
@@ -45,22 +45,22 @@ python -m pip install -r requirements-gui.txt
 python -m pip install scikit-learn matplotlib pytest "pandas>=2.2,<2.4"
 ```
 
-第二条安装命令补齐训练/评估及测试依赖，并将 pandas 设为 2.2 或 2.3，以支持证据审计中的 `groupby.apply(include_groups=False)`。依赖文件提供版本范围，尚未锁定全部依赖。
+The additional dependency command installs training, evaluation, and test dependencies, and selects pandas 2.2 or 2.3 to support `groupby.apply(include_groups=False)` in the evidence audit. The dependency file specifies version ranges; dependencies are not fully locked.
 
-安装后启动页面：
+Start the dashboard after installation:
 
 ```bash
 python -m streamlit run app.py
 ```
 
-在侧边栏选择数据源：
+Select a data source in the sidebar:
 
-1. **Simulation**：展示明确标注的模拟数据，不加载真实服务或模型，用于页面演示。
-2. **Backend CSV**：上传原始消息 CSV，点击 **Analyze CSV** 调用真实服务。模型从页面所在目录的 `models/` 加载，不会训练。
+1. **Simulation**: displays clearly labeled mock data for demonstration without loading the real service or models.
+2. **Backend CSV**: upload raw message CSV data and click **Analyze CSV** to call the real service. Models are loaded from `models/` beside the app; no training occurs.
 
-页面包含 Mission Overview 和 Collision Events，可查看当前等级、预测最终等级、质量提示、真实输入历史及 R/T/N 示意图，并下载处理结果和问题清单。没有选择数据源时显示空状态。切换文件会使旧分析失效，筛选或翻页不会重复运行推理。
+The Mission Overview and Collision Events pages show current levels, predicted final tiers, quality flags, actual input history, and R/T/N schematics. Processing results and input issues are downloadable. The app shows an empty state before a data source is selected. Changing the file invalidates the previous analysis; filtering and pagination do not rerun inference.
 
-将主办方原始数据放在以下位置；数据需自行准备：
+Obtain the organizer's raw data separately and place it here:
 
 ```text
 Data_raw/
@@ -68,9 +68,9 @@ Data_raw/
   test_data.csv
 ```
 
-本文命令使用实际目录 `Data_raw/`。旧报告和模型 metadata 中的 `data/raw/` 是训练时记录的历史路径，不必为推理修改 metadata。
+Commands in this README use `Data_raw/`. The `data/raw/` paths in older reports and model metadata record the historical training location; metadata does not need to be edited for inference.
 
-输入 CSV 至少需要以下列；随附 `final` 模型也需要历史 `risk`：
+Input CSV files must contain at least these columns, including historical `risk` for the bundled `final` model:
 
 ```text
 event_id, time_to_tca, miss_distance, relative_speed,
@@ -78,23 +78,23 @@ relative_position_r, relative_position_t, relative_position_n,
 c_object_type, c_sigma_r, t_sigma_r, max_risk_estimate, F10, AP, risk
 ```
 
-| 字段 | 含义 / 单位 |
+| Field | Meaning / unit |
 | --- | --- |
-| `event_id` | 事件标识，仅用于分组，不作为模型特征 |
-| `time_to_tca` | 距最近接近时刻的天数；数值越小，消息越新 |
-| `risk` | 历史消息已知的 `log10(Pc)`，不是原始概率；应 ≤ 0 |
-| `miss_distance`、`relative_position_r/t/n`、`c_sigma_r/t_sigma_r` | 米 |
-| `relative_speed` | 米/秒 |
+| `event_id` | Event identifier, used for grouping only, not as a model feature |
+| `time_to_tca` | Days until closest approach; smaller values indicate newer messages |
+| `risk` | Known historical `log10(Pc)`, not raw probability; must be ≤ 0 |
+| `miss_distance`, `relative_position_r/t/n`, `c_sigma_r/t_sigma_r` | Meters |
+| `relative_speed` | Meters/second |
 
-E 的物理特征还会读取 `c_sigma_t`、`t_sigma_t`、`c_sigma_n`、`t_sigma_n`，建议保留原始 CSV 的完整字段。这四列缺失时相应输入按 NaN 处理；不需上传由代码派生的特征列。
+E's physical features also read `c_sigma_t`, `t_sigma_t`, `c_sigma_n`, and `t_sigma_n`, so retain the original CSV's full set of columns where possible. Missing values or absent columns for these four inputs are treated as NaN. Derived feature columns do not need to be uploaded.
 
-必需列缺失会导致文件级 ERROR。除事件 ID、时间及 final 的历史 risk 外，允许的缺失值保留为 NaN 并记录 WARNING，不填成 0。数值不可解析、无穷值、负距离和负 sigma 等会报 ERROR。
+A missing required column causes a file-level ERROR. Except for event ID, time, and historical risk in final mode, permitted missing values remain NaN and produce WARNING entries rather than being filled with zero. Unparseable numeric values, infinities, negative distances, and negative sigma values produce ERROR entries.
 
-## 3. 使用现有模型分析 CSV
+## 3. Analyze a CSV with the saved models
 
-`models/` 已包含 `estimate.cbm`、`conservative.cbm`、`classifier.cbm` 和 `metadata.json`，使用它们推理不需要重新训练。
+`models/` contains `estimate.cbm`, `conservative.cbm`, `classifier.cbm`, and `metadata.json`. Inference with these models does not require retraining.
 
-在项目根目录运行以下 Python 代码：
+Run the following Python code from the repository root:
 
 ```python
 from pathlib import Path
@@ -124,162 +124,162 @@ for name in ("records", "events", "history", "issues"):
     )
 ```
 
-这是 Python 代码示例，不是 PowerShell 命令；可保存为本地脚本后用 `python <脚本名>.py` 执行。以上导出目录与已有训练、留出报告分开。
+Save this Python example as a local script and run `python <script_name>.py`. The export directory is separate from existing training and holdout reports.
 
-服务返回六项内容：
+The service returns six entries:
 
-| key | 类型 | 用途 |
+| Key | Type | Purpose |
 | --- | --- | --- |
-| `records` | DataFrame | 推理及规则结果；final 模式一事件一行，含未预测占位记录 |
-| `events` | DataFrame | 事件表，按当前等级、`alert_score` 降序排列 |
-| `history` | DataFrame | 实际参与推理的合法历史消息；`risk` 保留 log10 量纲 |
-| `issues` | DataFrame | 校验及服务问题，含行位置、事件、代码和原因 |
-| `summary` | dict | 行数、事件数、处理状态、等级计数和 24 小时覆盖 |
-| `metadata` | dict | 模型配置副本，附规则版本和服务版本 |
+| `records` | DataFrame | Inference and rule results; one row per event in final mode, including placeholders for unpredicted events |
+| `events` | DataFrame | Event table, ordered by current severity and then descending `alert_score` |
+| `history` | DataFrame | Valid historical messages actually used for inference; `risk` retains its log10 scale |
+| `issues` | DataFrame | Validation and service issues, including row position, event, code, and reason |
+| `summary` | dict | Row and event counts, processing status, level counts, and 24-hour coverage |
+| `metadata` | dict | A copy of model configuration with rule and service versions |
 
-模型在同一进程内按目录及文件修改时间、大小缓存。服务不训练模型，也不自动保存报告。缺少或损坏模型会抛出异常。
+Models are cached within the process by directory, modification time, and file size. The service does not train models or automatically save reports. Missing or corrupt models raise exceptions.
 
-## 4. 任务口径与模型
+## 4. Task definition and models
 
-### 样本与标签
+### Samples and labels
 
-当前 `train.py` 固定 `TASK = 'final'`，没有 `--task` 参数。
+`train.py` currently fixes `TASK = 'final'` and has no `--task` argument.
 
-1. 每个事件只使用 `time_to_tca >= horizon_days` 的消息，默认截止为 TCA 前 **2 天**。
-2. 取这些消息中最新的一条作为样本主记录，变化量、消息数和历史统计全部来自该输入窗口。
-3. 标签取同事件全部消息中最后一条的 `risk` 和 `miss_distance`，按阈值生成 `final_tier`；代码没有“标签必须在 TCA 前 1 天以内”的条件。
-4. `has_future=True` 表示事件存在 `time_to_tca < horizon_days` 的后续消息。无后续消息时，最终标签已在输入中，因此主要评估只使用有后续消息的事件。
+1. Each event uses only messages with `time_to_tca >= horizon_days`; the default cutoff is **2 days** before TCA.
+2. The latest eligible message supplies the main sample record. Deltas, message counts, and historical statistics use only messages in that input window.
+3. Labels use the `risk` and `miss_distance` from the last message across the entire event, applying the grading thresholds to obtain `final_tier`. The code does not require the label message to be within 1 day of TCA.
+4. `has_future=True` means the event has a later message with `time_to_tca < horizon_days`. For events without later messages, the final label is already present in the input, so the primary evaluation includes only events with later messages.
 
-`ml.py` 和服务层保留 `current` 模式支持，但随附模型及训练 CLI 均为 final。不能通过改参数名称或手动修改 metadata 将现有模型切换成 current。
+`ml.py` and the service retain support for `current` mode, but the bundled models and training CLI use final mode. Renaming an argument or editing metadata does not convert the saved model to current mode.
 
-### 特征与三个模型
+### Features and three models
 
-E 使用 **37 个特征**：12 个基础特征、5 个 final 特征、6 个历史统计特征及 14 个物理派生特征。物理特征包含各轴合成 sigma、标准化相对位置、距离阈值裕量、趋势外推距离和固定随机样本构造的距离范围比例。完整名称见 `ml.py` 的特征常量；类别特征是 `c_object_type` 和 `current_tier`。
+E uses **37 features**: 12 base features, 5 final-mode features, 6 historical statistics, and 14 derived physical features. Physical features include combined sigma per axis, normalized relative positions, distance-threshold margins, a trend-based projected distance, and distance-range proportions computed using fixed random samples. See the feature constants in `ml.py` for the full list. Categorical features are `c_object_type` and `current_tier`.
 
-| 文件 | 模型 | 输出含义 |
+| File | Model | Output meaning |
 | --- | --- | --- |
-| `estimate.cbm` | CatBoost RMSE 回归 | 最终 `log10(Pc)` 点估计，**不是中位数模型** |
-| `conservative.cbm` | CatBoost 分位数回归 | 保守估计；比较 alpha=0.8/0.9/0.95，随附模型选用 0.9 |
-| `classifier.cbm` | CatBoost 三分类 | 最终 Safe / Elevated / Critical 的分类分数 |
+| `estimate.cbm` | CatBoost RMSE regression | Point estimate of final `log10(Pc)`; **not a median model** |
+| `conservative.cbm` | CatBoost quantile regression | Conservative estimate; alpha=0.8/0.9/0.95 are compared, and the bundled model uses 0.9 |
+| `classifier.cbm` | CatBoost three-class classifier | Scores for final Safe / Elevated / Critical tiers |
 
-回归训练目标下限为 -10；回归误差评估也使用同样截断。`conservative_log10_pc` 通过取最大值保证不低于点估计；该分位数输出不是经过校准的置信上界。
+Regression targets are floored at -10, and regression error evaluation uses the same clipping. `conservative_log10_pc` is clamped to at least the point estimate. The quantile output is not a calibrated confidence bound.
 
-默认方案 **E** 使用物理特征、已选定的分类器参数和当前等级兜底，**没有时间兜底规则**。当前 `critical_threshold` 与 `stale_days` 均为 null：最终分类先取最高分等级，再保证当前已为 Critical 的事件不会被降级。
+The default variant **E** uses physical features, selected classifier parameters, and a current-tier safeguard, with **no stale-message time rule**. Both `critical_threshold` and `stale_days` are null: final classification first selects the highest-scoring tier, then ensures an event currently classified as Critical cannot be downgraded.
 
-`alert_score` 仍使用当前等级对应的训练 Critical 比例作为下限，并加入很小的分类分数用于排序；E 的离散最终等级不通过该排序分数阈值判定。分类器参数为 depth=7、learning_rate=0.0652、l2_leaf_reg=6.7、rsm=0.76，调参方案最多训练 300 次迭代。RMSE 与分位数回归模型使用各自的回归设置。
+`alert_score` still uses the training Critical rate for the current tier as a floor, with a small classifier-score contribution for ranking. E's discrete final tier is not determined by a threshold on this ranking score. Classifier parameters are depth=7, learning_rate=0.0652, l2_leaf_reg=6.7, and rsm=0.76; the tuned variant uses at most 300 iterations. The RMSE and quantile regressors use their own regression settings.
 
-### 三种等级与概率字段
+### Tier and probability fields
 
-| 字段 | 含义 |
+| Field | Meaning |
 | --- | --- |
-| `current_tier` | 最新合格输入消息按已知 risk 和距离计算的等级 |
-| `predicted_final_tier` | 分类模型和当前 Critical 不降级规则给出的最终等级预测 |
-| `risk_level` | 服务规则给出的当前等级，包含 UNKNOWN，使用大写名称 |
-| `tier_pc` / `tier_log10_pc` | 当前分级依据；final 使用最新已知 risk |
-| `predicted_pc` / `predicted_log10_pc` | 回归模型预测的最终风险 |
-| `conservative_pc` | 保守回归估计 |
-| `p_safe/p_elevated/p_critical` | 三分类模型输出，不是物理碰撞概率 |
-| `alert_score` | 用于事件排序的分数，不是碰撞概率 |
-| `baseline_score` | 当前等级优先、同级距离越近越靠前的基线排序分数 |
+| `current_tier` | Tier computed from known risk and distance in the latest eligible input message |
+| `predicted_final_tier` | Final tier predicted by the classifier and the current-Critical safeguard |
+| `risk_level` | Current level assigned by service rules, including UNKNOWN, using uppercase names |
+| `tier_pc` / `tier_log10_pc` | Evidence used for current grading; latest known risk in final mode |
+| `predicted_pc` / `predicted_log10_pc` | Final risk predicted by the regressor |
+| `conservative_pc` | Conservative regression estimate |
+| `p_safe/p_elevated/p_critical` | Three-class model outputs, not physical collision probabilities |
+| `alert_score` | Event ranking score, not collision probability |
+| `baseline_score` | Baseline ranking score: current tier first, then closer distance within a tier |
 
-尤其要区分 `risk_level` 与 `predicted_final_tier`：当前规则分级不使用最终风险回归估计替代历史观测。
+Distinguish `risk_level` from `predicted_final_tier`: current rule-based grading does not replace historical observations with the final-risk regression estimate.
 
-## 5. 当前风险规则与数据质量
+## 5. Current risk rules and data quality
 
-`rules.py` 按以下优先级使用分级用 Pc 和距离：
+`rules.py` applies these rules in priority order using the grading Pc and distance:
 
-| 当前等级 | 条件 |
+| Current level | Condition |
 | --- | --- |
-| CRITICAL | Pc ≥ 1e-4，或距离 < 1000 m |
-| ELEVATED | 不满足 CRITICAL，且（Pc ≥ 1e-6 或距离 ≤ 5000 m） |
-| SAFE | Pc < 1e-6，且距离 > 5000 m |
-| UNKNOWN | 现有证据不足以确定上述等级 |
+| CRITICAL | Pc ≥ 1e-4 or distance < 1000 m |
+| ELEVATED | Not CRITICAL, and either Pc ≥ 1e-6 or distance ≤ 5000 m |
+| SAFE | Pc < 1e-6 and distance > 5000 m |
+| UNKNOWN | Available evidence cannot establish one of the levels above |
 
-风险等级与质量状态分开。输入警告、缺失证据、保守估计使等级上升等情况可触发 `NEEDS_REVIEW`，SAFE 事件也可能需要复核。
+Risk level and quality status are separate. Input warnings, missing evidence, or a conservative estimate that would raise the level can trigger `NEEDS_REVIEW`. A SAFE event may still require review.
 
-证据比例为：
+The evidence ratio is:
 
 ```text
 sigma_ratio = sqrt(c_sigma_r² + t_sigma_r²) / miss_distance
 ```
 
-当最新已知 Pc < 1e-6 且该比例大于训练阈值时标记复核。随附阈值为 **0.10816974945035213**；缺失 sigma 不能视为 0。阈值实际来自有后续消息的训练事件中最终标签 `y < -6` 的有限比例值的 90 分位数，与运行时按最新已知 Pc 触发的口径存在差异，审计说明见 [留出复核报告](reports/holdout_review_submission.md)。
+Review is required when the latest known Pc < 1e-6 and this ratio exceeds the training threshold. The bundled threshold is **0.10816974945035213**; missing sigma must not be treated as zero. The threshold is the 90th percentile of finite ratios among training events with later messages and final label `y < -6`. This differs from the runtime condition based on latest known Pc; see the [holdout review report](reports/holdout_review_submission.md) for the audit.
 
-服务层对同事件任意校验 ERROR 暂停该事件整体推理；文件级 ERROR 阻止整批推理。输入窗口内重复的事件消息时间也会阻止该事件预测。可识别但无法预测的事件保留 `UNKNOWN / NEEDS_REVIEW`，并标记 `prediction_status=NOT_PREDICTED`。
+Any validation ERROR within an event prevents inference for that entire event; a file-level ERROR blocks the entire batch. Duplicate message times within an event's eligible input window also block prediction for that event. Identifiable events without predictions retain `UNKNOWN / NEEDS_REVIEW` placeholders with `prediction_status=NOT_PREDICTED`.
 
-24 小时统计条件为 `0 < time_to_tca_hours <= 24`，只代表各事件最新输入消息报告的窗口，没有统一观测时刻或完整覆盖保证。默认 final 输入至少为 48 小时，因此正常预测记录不覆盖该窗口；`INSUFFICIENT` 应显示为“覆盖不足”。页面另有七天高风险展示计数：去重统计 `0 <= time_to_tca_hours <= 168` 的 CRITICAL/ELEVATED 事件，与服务的 24 小时统计分别展示，不代表模型预测时间范围。
+The 24-hour statistic uses `0 < time_to_tca_hours <= 24` and represents only the window reported by each event's latest input message. It does not imply a shared observation time or complete coverage. Default final-mode inputs are at least 48 hours before TCA, so normal predicted records do not cover that window; display `INSUFFICIENT` as insufficient coverage. The dashboard separately counts unique CRITICAL/ELEVATED events with `0 <= time_to_tca_hours <= 168` for its seven-day display. This is separate from the service's 24-hour statistic and is not the model's prediction horizon.
 
-## 6. 训练设计与冻结状态
+## 6. Training design and frozen state
 
-事件按 70% / 15% / 15% 切为训练、验证和留出，seed=42；类别数量足够时按最终等级和是否存在后续消息分层。已有 `split_events.json` 会被复用并检查事件集合一致性。
+Events are split 70% / 15% / 15% into training, validation, and holdout sets with seed=42. When class counts are sufficient, splitting is stratified by final tier and whether later messages exist. An existing `split_events.json` is reused and checked for event-set consistency.
 
-| 分区 | 全部事件 | 有后续消息 |
+| Split | All events | Events with later messages |
 | --- | ---: | ---: |
-| 训练 | 8,359 | 6,224 |
-| 验证 | 1,791 | 1,333 |
-| 留出 | 1,792 | 1,335 |
+| Training | 8,359 | 6,224 |
+| Validation | 1,791 | 1,333 |
+| Holdout | 1,792 | 1,335 |
 
-默认 E 的三个生产模型使用训练分区中有后续消息的事件训练。代码保留 `train.py`、`experiments/` 和 `evaluate_holdout.py` 供检查训练方法与历史实验，日常运行只需加载已有模型。
+The three production models in the default E variant use training events with later messages. `train.py`, `experiments/`, and `evaluate_holdout.py` remain available to inspect training methods and historical experiments. Normal use only loads the saved models.
 
-**不再运行训练、重新切分或留出预测命令。** 留出集历史查看依次为 D_stale、E、E_stale，共 3 次；最终采用 E，第三次的 E_stale 未采用。多次查看可能造成选择偏差，不能将保存结果表述为一次独立的未见数据验证。
+**Do not rerun training, create new splits, or generate new holdout predictions.** Historical holdout inspections were D_stale, E, and E_stale, for 3 inspections in total. E was selected; E_stale from the third inspection was not adopted. Repeated inspection may introduce selection bias, so saved results must not be presented as a single independent evaluation on unseen data.
 
-## 7. 已保存结果与评估工具
+## 7. Saved results and evaluation tools
 
-以下数字引用 E 的 [第二次保存指标](reports/holdout_second_look/holdout_metrics.json) 和 [当前复核量报告](reports/workload_holdout.md)，并非本次重新训练或评估所得。根目录 `reports/holdout_metrics.json` 和 `holdout_predictions.csv` 是第一次 D_stale 的历史结果，不能混入最终 E 的材料。
+The figures below come from E's [saved second-inspection metrics](reports/holdout_second_look/holdout_metrics.json) and the [current workload report](reports/workload_holdout.md). They were not produced by new training or evaluation for this README. `reports/holdout_metrics.json` and `reports/holdout_predictions.csv` contain historical first-inspection D_stale results and must not be mixed into final E materials.
 
-主要范围为 `has_future=True`：1,335 个事件，其中 89 个最终 Critical。
+The primary scope is `has_future=True`: 1,335 events, including 89 final Critical events.
 
-| 指标 | 当前等级 / 排序基线 | E |
+| Metric | Current-tier / ranking baseline | E |
 | --- | ---: | ---: |
-| 最终三分类准确率 | 91.61% | 92.51% |
-| 三类宏平均 F1（保存报告约值） | 0.853 | 0.861 |
-| 固定等级预测的 Critical Recall | 72/89 = 80.90% | 73/89 = 82.02% |
-| 排序达到至少 90% Recall 所需复核数 | 125 | 125 |
-| 该排序预算下实际发现的 Critical | 81/89 = 91.01% | 81/89 = 91.01% |
+| Final three-class accuracy | 91.61% | 92.51% |
+| Three-class macro F1 (rounded saved-report values) | 0.853 | 0.861 |
+| Critical recall from discrete tier predictions | 72/89 = 80.90% | 73/89 = 82.02% |
+| Reviews needed to reach at least 90% recall by ranking | 125 | 125 |
+| Critical events found at that review budget | 81/89 = 91.01% | 81/89 = 91.01% |
 
-主范围复核量减少 **0%**，1,000 次配对事件 bootstrap 的 95% 区间为 **[-13.69%, 26.95%]**。全部 1,792 个事件的补充结果为 153 → 150 次复核，减少约 1.96%，区间为 [-11.73%, 10.07%]。两组区间均跨 0，不能宣称稳定降低工作量；全部事件宏平均 F1 约 0.866，也低于基线的 0.890。
+The primary scope shows **0%** workload reduction, with a paired-event bootstrap 95% interval of **[-13.69%, 26.95%]** from 1,000 resamples. The supplementary scope of all 1,792 events requires 153 → 150 reviews, a reduction of about 1.96%, with an interval of [-11.73%, 10.07%]. Both intervals cross zero, so these results do not establish a stable workload reduction. Macro F1 across all events is approximately 0.866, below the baseline's 0.890.
 
-保存 E 预测的版本为 **`20261031-063722`**，当前模型 metadata 为 **`20261031-064613`**。现有材料没有证明这两份模型二进制完全一致；不要将保存预测的指标说成对当前 bundle 新推理测得的成绩。详情见 [最终模型记录](reports/final_model_summary.md)。
+The saved E predictions have version **`20261031-063722`**, while current model metadata has version **`20261031-064613`**. Existing materials do not establish that the model binaries are identical. Do not describe saved-prediction metrics as measurements from new inference with the current bundle. See the [final model record](reports/final_model_summary.md).
 
-排序预算是带真值的事后测量，与固定等级阈值的召回、服务中的 NEEDS_REVIEW 数量含义不同。测试 CSV 没有最终真值，不能据此报告最终预测准确率。
+A ranking budget is a retrospective measurement using known labels. It differs from discrete-tier recall and from the service's NEEDS_REVIEW count. The test CSV has no final ground truth and cannot establish final prediction accuracy.
 
-仅需重现验证集复核量报告时，可在新目录输出：
+To reproduce only the validation workload report, write outputs to a separate directory:
 
 ```bash
 python evaluate_workload.py --predictions reports/validation_predictions.csv --split validation --target-recall 0.9 --bootstrap 1000 --seed 42 --output reports/reproduced/workload_validation.json
 ```
 
-其他工具用途：
+Other tools:
 
-| 脚本 | 行为 |
+| Script | Behavior |
 | --- | --- |
-| `evaluate_workload.py` | 从保存的预测计算复核量，输出 JSON、Markdown、曲线 CSV 和 PNG |
-| `evaluate_evidence.py` | 核对保存预测、输入证据、阈值来源和规则；不训练或调用模型预测 |
-| `submission_review.py` | 比较首版与候选的已保存预测，输出替换资格检查，不替换模型或提交 |
+| `evaluate_workload.py` | Computes workload from saved predictions and exports JSON, Markdown, curve CSV, and PNG |
+| `evaluate_evidence.py` | Checks saved predictions, input evidence, threshold provenance, and rules without training or model inference |
+| `submission_review.py` | Compares saved first-version and candidate predictions and reports replacement eligibility without replacing models or submitting |
 
-`evaluate_evidence.py` 默认读取 E 的第二次保存预测，可通过 `--predictions`、`--metrics`、`--models`、`--split`、`--workload` 等参数指定匹配的材料，路径相对于运行目录。只分析保存预测的复现命令见 [复核报告](reports/holdout_review_submission.md)，包括版本来源和三次查看记录；不要重新运行留出预测。
+`evaluate_evidence.py` defaults to E's saved second-inspection predictions. Matching materials can be specified with `--predictions`, `--metrics`, `--models`, `--split`, and `--workload`; paths are relative to the working directory. Commands for reanalyzing saved predictions are in the [review report](reports/holdout_review_submission.md), including version provenance and the record of 3 inspections. Do not regenerate holdout predictions.
 
-`submission_review.py` 保留历史替换检查：同事件、同真值、同基线条件下，宏平均 F1 不低于首版模型且 Critical Recall 不低于基线才具备替换资格。当前最终选择已冻结。
+`submission_review.py` retains the historical replacement checks: with identical events, truth, and baseline, a candidate is eligible only if its macro F1 is no lower than the first model's and its Critical recall is no lower than the baseline's. The final selection is now frozen.
 
-## 8. 目录与测试
+## 8. Repository layout and tests
 
 ```text
-Autonomous-SG-2026/
-  Data_raw/                 # 自行准备的原始 CSV
-  models/                   # 三个 CatBoost 模型及 metadata
-  reports/                  # 切分、预测、指标、审计和提交流程
-  tests/                    # ML、训练、校验、规则、服务、评估与候选检查
-  app.py                    # Streamlit 入口
-  gui_backend.py            # 延迟调用服务的上传适配器
-  gui_data.py                # 前端契约、排序与展示统计
-  gui_charts.py              # Plotly 图表
-  gui_mock.py                # 模拟演示数据
-  gui_style.py               # 页面样式
+HurriKane/
+  Data_raw/                 # Raw CSV data obtained separately
+  models/                   # Three CatBoost models and metadata
+  reports/                  # Splits, predictions, metrics, audits, and handoff
+  tests/                    # ML, training, validation, rules, service, and analysis tests
+  app.py                    # Streamlit entry point
+  gui_backend.py            # Upload adapter that loads the service lazily
+  gui_data.py               # Frontend contracts, sorting, and display statistics
+  gui_charts.py             # Plotly charts
+  gui_mock.py               # Simulation fixtures
+  gui_style.py              # Dashboard styling
   requirements-gui.txt
   GUI_DEVELOPMENT.md
-  analysis_provenance.py     # 保存预测的来源记录
-  experiments/               # 历史交叉验证与调参脚本
-  tests_gui/                 # 页面及真实服务集成测试
+  analysis_provenance.py    # Saved-prediction provenance
+  experiments/             # Historical cross-validation and tuning scripts
+  tests_gui/               # GUI and real-service integration tests
   ml.py
   train.py
   validation.py
@@ -292,17 +292,17 @@ Autonomous-SG-2026/
   README.md
 ```
 
-安装依赖后运行现有测试：
+After installing dependencies, run the existing tests:
 
 ```bash
 python -m pytest tests -q
 python -m unittest discover -s tests_gui -v
 ```
 
-训练流程测试使用合成数据及临时模型目录；GUI 集成测试使用合成消息，不读取真实留出标签。更详细的前端说明见 [GUI 开发说明](GUI_DEVELOPMENT.md)，输入校验接口见 [`validation.py`](validation.py)，服务接口见 [`service.py`](service.py)。
+Training pipeline tests use synthetic data and temporary model directories. GUI integration tests use synthetic messages without reading actual holdout labels. See the [GUI development guide](GUI_DEVELOPMENT.md), [input validation interface](validation.py), and [service interface](service.py) for details.
 
-## 9. 使用边界
+## 9. Scope and limitations
 
-本项目预测数据集提供的风险指标与最终等级，用于事件排序和人工复核，不执行轨道仿真、机动规划或自动避碰。R/T/N 表示相对位置，不是重建轨道。分类分数和回归分位数不应展示为经过物理验证的碰撞概率或置信保证。
+The project predicts dataset risk indicators and final tiers to support event ranking and human review. It does not perform orbital simulation, maneuver planning, or automatic collision avoidance. R/T/N values describe relative positions, not reconstructed orbits. Classifier scores and regression quantiles must not be presented as physically validated collision probabilities or confidence guarantees.
 
-当前 E 不使用消息时间兜底规则，全部事件指标包含没有后续消息的事件，且结果来自多次查看留出集后的选择；展示时须说明范围和版本。数据校验通过只表示可处理，`summary.status == "ok"` 不表示所有事件安全。Simulation 是模拟演示，真实 CSV 分析也不代表实时遥测。比赛材料及正式收件状态由负责提交的队友维护，见 [材料交接说明](reports/submission_plan.md)。
+E does not use a stale-message time rule. All-event metrics include events without later messages, and the final model was selected after repeated holdout inspection; disclose the evaluation scope and versions. Passing input validation only means the data can be processed. `summary.status == "ok"` does not mean all events are safe. Simulation is a mock demonstration, and real CSV analysis does not imply live telemetry. Competition materials and submission receipts are maintained by the teammate responsible for submission; see the [submission handoff](reports/submission_plan.md).
