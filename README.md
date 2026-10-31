@@ -1,5 +1,7 @@
 # HurriKane — Satellite Collision Risk Assessment
 
+**Live demo:** [https://hurrikane-ox7w3xb4azkfwnzpdqmezd.streamlit.app/](https://hurrikane-ox7w3xb4azkfwnzpdqmezd.streamlit.app/)
+
 A Python implementation for Autonomous SG 2026 · Airbus Challenge #1. The project uses historical messages for each conjunction event to predict its final risk tier and `log10(Pc)`, with input validation, current risk grading, insufficient-evidence flags, and review workload analysis.
 
 This README describes the current code and bundled models, replacing the early six-hour development plan. The current model is **`E`**, version **`20261031-064613`**, with the **ORBITGUARD** Streamlit dashboard.
