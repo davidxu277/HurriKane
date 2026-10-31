@@ -1,0 +1,26 @@
+{
+  "target": "final_tier",
+  "split": "validation",
+  "purpose": "development_only",
+  "primary_scope": "has_future == True",
+  "positive_definition": "final_tier == 'Critical'",
+  "source_prediction_sha256": "3533372b9f758759dec3abaec2fcfa0030be98c487a78b2d48591f15641cb573",
+  "analysis_code_sha256": "0863bd734e892de4a8c74e2b0e9e51a6bd0462e600bbcf3debc6abd762424ddf",
+  "source_commit": "b52f34fd20bb42f2a4d5ff689d9fefc8a5fb3770",
+  "accompanying_model_version": "20261031-054344",
+  "bootstrap_iterations": 1000,
+  "seed": 42,
+  "primary_events": 1333,
+  "primary_critical_events": 88,
+  "note": "模型版本来自当前配套 metadata；输入身份由预测文件 SHA256 确认。未运行训练或留出评估。",
+  "audience": "B",
+  "files": {
+    "candidate_failure_case.json": "a75d49553c50aa895ebe390de4ef3f7efcee509cfdb715ac797ed3440c43e8b5",
+    "metadata.json": "916441a606dbaa89ce99c71ee7ccc1a3f38910ca65edecad1409d5d37fe06a23",
+    "README_B.md": "6939369de4ee65257936d6932d05760eb70eecea68889c61487771118563496d",
+    "workload_validation.json": "27c9b0aba71f2a93b5b0465ccfc79f9e47e2f044884f411a526be0c5201cd1f2",
+    "workload_validation.md": "145dad1acae184f11642b85e94348d874a96fef57ac98f8a2b37775d032f557a",
+    "workload_validation_curve.csv": "a2970026abb7cd202aced02fcf99ef8131e7d07d76f97106d1606773147870b6",
+    "workload_validation_curve.png": "653ccfa0303af0e4da2f56b1aba561ef197656ab684d711a920315f474cb167e"
+  }
+}
