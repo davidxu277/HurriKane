@@ -13,6 +13,21 @@ from gui_mock import mock_result
 from gui_charts import donut
 from gui_charts import history_chart, position_chart
 
+def service_result():
+    mock = mock_result()
+    events = mock['events'].copy()
+    events['event_id'] = events.event_id.astype(str)
+    events['prediction_status'] = 'PREDICTED'
+    events['predicted_final_tier'] = 'Safe'
+    summary = {'status': 'ok', 'total_events': 20, 'needs_review_events': 7,
+               'critical_events': 5, 'elevated_events': 6, 'safe_events': 6, 'unknown_events': 3,
+               'window_24h': {'coverage_status': 'INSUFFICIENT', 'coverage_note': 'Test coverage'}}
+    summary.update(event_count=20, critical_count=5, elevated_count=6, safe_count=6, unknown_count=3, needs_review_count=7, window_24h_count=None, window_24h_note='Test coverage')
+    return {'records': events.copy(), 'events': events, 'history': pd.DataFrame(columns=['event_id', 'time_to_tca_hours', 'risk', 'miss_distance_m']),
+            'issues': pd.DataFrame(columns=['input_record_id', 'row_position', 'event_id', 'column', 'code', 'severity', 'value', 'message']),
+            'summary': summary, 'metadata': {**mock['metadata'], 'units': {'time_to_tca': 'days'}, 'history_risk_scale': 'log10(Pc)'}}
+
+
 APP = str(Path(__file__).resolve().parents[1] / 'app.py')
 
 
@@ -77,9 +92,27 @@ class DataTests(unittest.TestCase):
 
 
 class AppTests(unittest.TestCase):
+    def test_first_launch_has_no_source_or_dataset(self):
+        with patch('gui_mock.mock_result', side_effect=AssertionError('Mock data loaded before selection')):
+            at = AppTest.from_file(APP, default_timeout=20).run()
+            self.assertEqual(len(at.exception), 0)
+            self.assertIsNone(self.by_label(at.radio, 'Data source').value)
+            self.assertEqual(self.by_label(at.radio, 'Data source').options, ['Simulation', 'Backend CSV'])
+            self.assertEqual([m.value for m in at.metric], ['—'] * 4)
+            self.assertEqual(len(at.get('plotly_chart')), 0)
+            self.assertEqual(len(at.dataframe), 0)
+            self.assertEqual(len(at.get('download_button')), 0)
+            self.assertTrue(any('No analysis loaded.' in i.value for i in at.info))
+            at.run()
+            self.assertIsNone(self.by_label(at.radio, 'Data source').value)
+            self.collision(at)
+            self.assertEqual(len(at.dataframe), 0)
+            self.assertEqual(len(at.get('plotly_chart')), 0)
+
     def app(self):
         at = AppTest.from_file(APP, default_timeout=20).run()
         self.assertEqual(len(at.exception), 0)
+        self.by_label(at.radio, 'Data source').set_value('Simulation').run()
         return at
 
     def by_label(self, collection, label):
@@ -246,6 +279,7 @@ class AppTests(unittest.TestCase):
         at = AppTest.from_file(APP, default_timeout=20)
         at.session_state.navigation = 'Settings'
         at.run()
+        self.by_label(at.radio, 'Data source').set_value('Simulation').run()
         self.assertEqual(at.session_state.navigation, 'Mission Overview')
         self.assertEqual(self.by_label(at.radio, 'Navigation').options, ['Mission Overview', 'Collision Events'])
         self.assertTrue(any('DATA SOURCE' in m.value for m in at.markdown))
@@ -278,7 +312,7 @@ class AppTests(unittest.TestCase):
     def test_backend_upload_missing_and_no_analysis_on_navigation(self):
         at = self.app()
         self.by_label(at.radio, 'Data source').set_value('Backend CSV').run()
-        self.assertTrue(any('Use the sidebar to analyze a CSV' in c.value for c in at.caption))
+        self.assertTrue(any('No analysis loaded.' in i.value for i in at.info))
         self.assertTrue(self.by_label(at.button, 'Analyze CSV').disabled)
         self.assertTrue(any('Choose a CSV to begin.' in m.value for m in at.sidebar.markdown))
         self.assertEqual(len(at.sidebar.info), 0)
@@ -287,7 +321,7 @@ class AppTests(unittest.TestCase):
     def test_backend_csv_ui_errors_and_cached_navigation(self):
         at = self.app()
         upload = SimpleNamespace(getvalue=lambda: b'event_id,risk\n1024,-5\n')
-        backend = Mock(return_value=mock_result())
+        backend = Mock(return_value=service_result())
         with patch('streamlit.file_uploader', return_value=upload), patch.dict(sys.modules, {'service': SimpleNamespace(analyze_csv=backend)}):
             self.by_label(at.radio, 'Data source').set_value('Backend CSV').run()
             self.assertTrue(any('Ready to analyze.' in m.value for m in at.sidebar.markdown))
@@ -297,13 +331,13 @@ class AppTests(unittest.TestCase):
             self.assertTrue(any('Analysis complete.' in m.value for m in at.sidebar.markdown))
             self.collision(at)
             self.by_label(at.text_input, 'Search event ID').set_value('1024').run()
-            self.by_label(at.selectbox, 'Open event details').set_value(1024).run()
+            self.by_label(at.selectbox, 'Open event details').set_value('1024').run()
             self.by_label(at.button, 'Open selected event').click().run()
             self.by_label(at.button, '✕').click().run()
             self.assertEqual(backend.call_count, 1)
             self.assertEqual(at.session_state.data_source, 'Backend CSV')
             self.assertIsNone(at.session_state.selected_event)
-            self.assertEqual(at.dataframe[-1].value['Event ID'].tolist(), [1024])
+            self.assertEqual(at.dataframe[-1].value['Event ID'].tolist(), ['1024'])
             backend.side_effect = RuntimeError('Model bundle unavailable')
             self.by_label(at.button, 'Analyze CSV').click().run()
             self.assertTrue(any('Model bundle unavailable' in e.value for e in at.error))
@@ -339,9 +373,9 @@ class AppTests(unittest.TestCase):
 class BackendAdapterTests(unittest.TestCase):
     def test_csv_validation_and_backend_errors(self):
         from gui_backend import analyze_upload
-        backend = Mock(return_value=mock_result())
+        backend = Mock(return_value=service_result())
         with patch.dict(sys.modules, {'service': SimpleNamespace(analyze_csv=backend)}):
-            for payload in [b'', b'event_id,risk\n', b'not-a-csv\nhello']:
+            for payload in [b'', b' ', b'event_id,risk\n1,\"unterminated']:
                 with self.assertRaises(ValueError):
                     analyze_upload(payload)
             backend.assert_not_called()
@@ -349,14 +383,15 @@ class BackendAdapterTests(unittest.TestCase):
             self.assertEqual(len(data['events']), 20)
             args = backend.call_args.args
             self.assertIsInstance(args[0], pd.DataFrame)
-            self.assertEqual(args[1], 'models')
+            self.assertEqual(backend.call_args.kwargs['model_dir'], Path(APP).parent / 'models')
+            self.assertEqual(args[0].event_id.tolist(), ['1024'])
             backend.side_effect = RuntimeError('Model bundle unavailable')
             with self.assertRaisesRegex(RuntimeError, 'Model bundle unavailable'):
                 analyze_upload(b'event_id,risk\n1024,-5\n')
 
     def test_empty_result_is_safe(self):
         from gui_backend import analyze_upload
-        backend = Mock(return_value={'events': [], 'history': [], 'issues': [], 'summary': {}, 'metadata': {}})
+        backend = Mock(return_value={**service_result(), 'events': service_result()['events'].iloc[:0], 'records': pd.DataFrame()})
         with patch.dict(sys.modules, {'service': SimpleNamespace(analyze_csv=backend)}):
             self.assertTrue(analyze_upload(b'event_id,risk\n1,-5\n')['events'].empty)
 
