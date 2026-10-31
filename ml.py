@@ -145,25 +145,35 @@ def predicted_tiers(probabilities, alert_score, critical_threshold):
     return np.where(np.asarray(alert_score) > critical_threshold, 'Critical', lower)
 
 
+def apply_stale_rule(predicted, current_tier, time_to_tca, stale_days):
+    """最新消息已经很旧时，后面大概率不再有消息，直接沿用当前等级。"""
+    if stale_days is None:
+        return predicted
+    return np.where(np.asarray(time_to_tca) >= stale_days, np.asarray(current_tier), predicted)
+
+
 def tier_probabilities(model, features):
     frame = pd.DataFrame(model.predict_proba(features), columns=[str(c) for c in model.classes_])
     return frame.reindex(columns=list(TIERS), fill_value=0.0)
 
 
-def combine_predictions(samples, estimate, conservative, probabilities, critical_rates, critical_threshold):
+def combine_predictions(samples, estimate, conservative, probabilities, critical_rates, critical_threshold,
+                        stale_days=None):
     predicted = np.asarray(estimate, dtype=float)
     guarded = guard_conservative(predicted, conservative)
     # 分级用已知的最新 Pc；current 模式没有已知值，只能用模型估计
     known = samples['known_log10_pc'].to_numpy(dtype=float)
     tier = np.where(np.isnan(known), predicted, known)
     alert = alert_scores(probabilities['Critical'], samples['current_tier'], critical_rates)
+    final_tier = apply_stale_rule(predicted_tiers(probabilities, alert, critical_threshold),
+                                  samples['current_tier'], samples['time_to_tca'], stale_days)
     return pd.DataFrame({
         'input_record_id': samples['input_record_id'].to_numpy(),
         'event_id': samples['event_id'].to_numpy(),
         'time_to_tca_hours': samples['time_to_tca'].to_numpy() * 24,
         'miss_distance_m': samples['miss_distance'].to_numpy(),
         'current_tier': samples['current_tier'].to_numpy(),
-        'predicted_final_tier': predicted_tiers(probabilities, alert, critical_threshold),
+        'predicted_final_tier': final_tier,
         'p_safe': probabilities['Safe'].to_numpy(),
         'p_elevated': probabilities['Elevated'].to_numpy(),
         'p_critical': probabilities['Critical'].to_numpy(),
@@ -200,4 +210,5 @@ def predict_batch(df, bundle):
         tier_probabilities(bundle['classifier'], features),
         metadata['critical_rates'],
         metadata['critical_threshold'],
+        metadata.get('stale_days'),
     )

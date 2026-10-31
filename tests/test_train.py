@@ -87,16 +87,27 @@ def test_choose_alpha_switches_for_clear_gain():
     assert choose_alpha({0.8: 10, 0.9: 10, 0.95: 12}) == 0.95
 
 
-def test_choose_variant_keeps_simpler_option_within_noise():
-    assert choose_variant({'B': 40, 'C': 41, 'D': 41}) == 'B'
+def variant(critical, future, overall):
+    return {'critical_true_positives': critical, 'accuracy_future': future, 'accuracy_all': overall}
 
 
-def test_choose_variant_moves_on_for_clear_gain():
-    assert choose_variant({'B': 40, 'C': 41, 'D': 42}) == 'D'
+def test_choose_variant_moves_on_when_nothing_gets_worse():
+    results = {'C': variant(77, 0.94, 0.94), 'D': variant(77, 0.94, 0.95)}
+    assert choose_variant(results) == 'D'
 
 
-def test_choose_variant_measures_gain_from_current_choice():
-    assert choose_variant({'B': 40, 'C': 42, 'D': 43, 'E': 44}) == 'E'
+@pytest.mark.parametrize('later', [
+    variant(76, 0.99, 0.99),
+    variant(80, 0.93, 0.99),
+    variant(80, 0.99, 0.93),
+])
+def test_choose_variant_keeps_current_when_any_measure_gets_worse(later):
+    assert choose_variant({'C': variant(77, 0.94, 0.94), 'D': later}) == 'C'
+
+
+def test_choose_variant_compares_with_current_choice():
+    results = {'C': variant(77, 0.94, 0.94), 'D': variant(77, 0.95, 0.95), 'E': variant(77, 0.94, 0.99)}
+    assert choose_variant(results) == 'D'
 
 
 def test_critical_rates_are_measured_per_current_tier():
