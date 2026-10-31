@@ -50,7 +50,7 @@ def synthetic_messages(events=300, seed=7):
 
 def run_training(monkeypatch, csv_path, models, reports, *extra):
     argv = ['train.py', '--train', str(csv_path), '--iterations', ITERATIONS,
-            '--models', str(models), '--reports', str(reports), *extra]
+            '--models', str(models), '--reports', str(reports), '--variant', 'auto', *extra]
     monkeypatch.setattr(sys, 'argv', argv)
     train.main()
 
@@ -226,9 +226,9 @@ def test_main_compares_variants_only_on_events_with_later_messages(tmp_path, mon
     seen = {}
     real = train.compare_variants
 
-    def spy(train_all, train_future, validation, rates, iterations):
+    def spy(train_all, train_future, validation, rates, iterations, variant):
         seen.update(train_all=train_all, train_future=train_future, validation=validation)
-        return real(train_all, train_future, validation, rates, iterations)
+        return real(train_all, train_future, validation, rates, iterations, variant)
 
     monkeypatch.setattr(train, 'compare_variants', spy)
     run_training(monkeypatch, csv_path, tmp_path / 'models', tmp_path / 'reports')
@@ -311,3 +311,25 @@ def test_compare_counts_critical_only_on_events_with_later_messages(monkeypatch)
 def test_compare_fits_each_training_set_it_claims(monkeypatch):
     samples, future, fitted_on, _ = compare_with_always_safe(monkeypatch)
     assert set(fitted_on) == {len(future), len(samples)}
+
+
+def test_default_training_uses_the_team_final_variant(tmp_path, monkeypatch):
+    csv_path = tmp_path / 'train.csv'
+    synthetic_messages().to_csv(csv_path, index=False)
+    monkeypatch.setattr(train, 'choose_variant', lambda results: 'B')
+    monkeypatch.setattr(sys, 'argv', ['train.py', '--train', str(csv_path), '--iterations', ITERATIONS,
+                                      '--models', str(tmp_path / 'models'), '--reports', str(tmp_path / 'reports')])
+    train.main()
+    metadata = load_bundle(tmp_path / 'models')['metadata']
+    assert metadata['variant'] == 'D_stale'
+    assert metadata['stale_days'] == train.STALE_DAYS
+    assert 'risk_slope' in metadata['features']
+    assert metadata['critical_rates'] is not None
+
+
+def test_named_variant_overrides_the_automatic_choice(tmp_path, monkeypatch):
+    csv_path = tmp_path / 'train.csv'
+    synthetic_messages().to_csv(csv_path, index=False)
+    monkeypatch.setattr(train, 'choose_variant', lambda results: 'B')
+    run_training(monkeypatch, csv_path, tmp_path / 'models', tmp_path / 'reports', '--variant', 'C')
+    assert load_bundle(tmp_path / 'models')['metadata']['variant'] == 'C'

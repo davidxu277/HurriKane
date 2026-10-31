@@ -43,6 +43,7 @@ VARIANTS = {
     'D_all_events_stale': (True, True, True, True),
 }
 SELECTION_MEASURES = ('critical_true_positives', 'accuracy_future', 'accuracy_all')
+FINAL_VARIANT = 'D_stale'    # 团队看过验证集比较后选定：两种准确率和复核量都优于基线
 
 PREDICTION_COLUMNS = [
     'event_id', 'y_true', 'final_tier', 'has_future', 'current_tier', 'predicted_final_tier',
@@ -253,7 +254,7 @@ def fit_classifier(train, validation, features, iterations):
     return model.fit(pool, eval_set=eval_pool, early_stopping_rounds=50)
 
 
-def compare_variants(train_all, train, validation, rates, iterations):
+def compare_variants(train_all, train, validation, rates, iterations, variant='auto'):
     """在验证集上比较各方案，误报率和当前等级基线对齐，主要看有后续消息的事件。"""
     future = validation['has_future'].to_numpy()
     final = validation['final_tier'].to_numpy()
@@ -286,7 +287,7 @@ def compare_variants(train_all, train, validation, rates, iterations):
                                      validation['time_to_tca'], STALE_DAYS if stale else None)
         results[name] = summary(scores[future], predicted)
 
-    chosen = choose_variant(results)
+    chosen = choose_variant(results) if variant == 'auto' else variant
     history, _, all_events, _ = VARIANTS[chosen]
     baseline = summary(validation['baseline_score'].to_numpy()[future], current)
     return chosen, fitted[(history, all_events)], {'baseline': baseline, **results}
@@ -297,6 +298,8 @@ def main():
     parser.add_argument('--train', required=True)
     parser.add_argument('--horizon-days', type=float, default=2.0)
     parser.add_argument('--iterations', type=int, default=400)
+    parser.add_argument('--variant', choices=['auto', *VARIANTS], default=FINAL_VARIANT,
+                        help='默认用团队选定的方案；auto 按 SELECTION_MEASURES 自动选择')
     parser.add_argument('--models', default='models')
     parser.add_argument('--reports', default='reports')
     parser.add_argument('--evaluate-holdout', action='store_true')
@@ -326,7 +329,7 @@ def main():
 
     rates = critical_rates(train)
     variant, classifier, variant_report = compare_variants(
-        train_all, train, parts['validation'], rates, args.iterations
+        train_all, train, parts['validation'], rates, args.iterations, args.variant
     )
     history, fallback, _, stale = VARIANTS[variant]
     stale_days = STALE_DAYS if stale else None

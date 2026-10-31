@@ -2,7 +2,7 @@
   "metadata": {
     "task": "final",
     "target": "final_tier",
-    "variant": "C",
+    "variant": "D_stale",
     "features": [
       "time_to_tca",
       "miss_distance",
@@ -20,7 +20,13 @@
       "risk_delta",
       "miss_distance_delta",
       "message_count",
-      "current_tier"
+      "current_tier",
+      "risk_max",
+      "risk_std",
+      "risk_slope",
+      "miss_distance_min",
+      "miss_distance_slope",
+      "c_sigma_r_delta"
     ],
     "categorical_features": [
       "c_object_type",
@@ -39,8 +45,8 @@
       "Elevated": 0.060240963855421686,
       "Critical": 0.7927710843373494
     },
-    "critical_threshold": 0.6489874176463691,
-    "stale_days": null,
+    "critical_threshold": 0.5481451801427816,
+    "stale_days": 3.0,
     "split_seed": 42,
     "alpha": 0.9,
     "selection_level": -6.0,
@@ -52,7 +58,7 @@
       "holdout": 1792
     },
     "training_events": 6224,
-    "model_version": "20261031-053646"
+    "model_version": "20261031-054344"
   },
   "validation": {
     "variants": {
@@ -146,7 +152,7 @@
         "events": 1333,
         "accuracy": {
           "baseline": 0.9309827456864216,
-          "model": 0.9429857464366092
+          "model": 0.9392348087021756
         },
         "confusion": {
           "Critical": {
@@ -156,13 +162,13 @@
           },
           "Elevated": {
             "Critical": 19,
-            "Elevated": 208,
-            "Safe": 25
+            "Elevated": 207,
+            "Safe": 26
           },
           "Safe": {
             "Critical": 3,
-            "Elevated": 18,
-            "Safe": 972
+            "Elevated": 22,
+            "Safe": 968
           }
         },
         "critical": {
@@ -193,7 +199,7 @@
               "recall": 0.875
             },
             "model": {
-              "threshold": 0.6489874176463691,
+              "threshold": 0.5481451801427816,
               "true_positives": 77,
               "false_positives": 22,
               "false_negatives": 11,
@@ -202,7 +208,7 @@
           },
           "review_for_90_recall": {
             "baseline": 113,
-            "model": 117
+            "model": 111
           }
         }
       },
@@ -210,7 +216,7 @@
         "events": 1791,
         "accuracy": {
           "baseline": 0.9486320491345617,
-          "model": 0.9447236180904522
+          "model": 0.954215522054718
         },
         "confusion": {
           "Critical": {
@@ -220,13 +226,13 @@
           },
           "Elevated": {
             "Critical": 20,
-            "Elevated": 257,
-            "Safe": 47
+            "Elevated": 278,
+            "Safe": 26
           },
           "Safe": {
             "Critical": 3,
-            "Elevated": 18,
-            "Safe": 1321
+            "Elevated": 22,
+            "Safe": 1317
           }
         },
         "critical": {
@@ -257,7 +263,7 @@
               "recall": 0.912
             },
             "model": {
-              "threshold": 0.653089176387139,
+              "threshold": 0.5926502791977304,
               "true_positives": 114,
               "false_positives": 22,
               "false_negatives": 11,
@@ -283,8 +289,8 @@
           "mae": 0.38817045768561637
         },
         "estimate_model": {
-          "rmse": 0.5766179421887967,
-          "mae": 0.2238276063622582
+          "rmse": 0.5750953149647722,
+          "mae": 0.225073047646567
         }
       },
       "levels": {
@@ -319,35 +325,35 @@
               "recall": null
             },
             "estimate_model": {
-              "threshold": -7.084458193212129,
+              "threshold": -7.268437081380386,
               "true_positives": 0,
               "false_positives": 3,
               "false_negatives": 0,
               "recall": null
             },
             "classifier": {
-              "threshold": 0.947996658539871,
+              "threshold": 0.9445669730625302,
               "true_positives": 0,
               "false_positives": 3,
               "false_negatives": 0,
               "recall": null
             },
             "conservative_0.8": {
-              "threshold": -5.1447894201708255,
+              "threshold": -5.3739619968256,
               "true_positives": 0,
               "false_positives": 3,
               "false_negatives": 0,
               "recall": null
             },
             "conservative_0.9": {
-              "threshold": -5.044176305624041,
+              "threshold": -5.175692962995154,
               "true_positives": 0,
               "false_positives": 3,
               "false_negatives": 0,
               "recall": null
             },
             "conservative_0.95": {
-              "threshold": -4.849182955066045,
+              "threshold": -4.850757051149859,
               "true_positives": 0,
               "false_positives": 3,
               "false_negatives": 0,
@@ -386,35 +392,35 @@
               "recall": 0.7692307692307693
             },
             "estimate_model": {
-              "threshold": -8.515701117520386,
-              "true_positives": 8,
+              "threshold": -8.537689187835166,
+              "true_positives": 9,
               "false_positives": 55,
-              "false_negatives": 5,
-              "recall": 0.6153846153846154
+              "false_negatives": 4,
+              "recall": 0.6923076923076923
             },
             "classifier": {
-              "threshold": 0.811721930944239,
-              "true_positives": 4,
+              "threshold": 0.8166807462879925,
+              "true_positives": 3,
               "false_positives": 55,
-              "false_negatives": 9,
-              "recall": 0.3076923076923077
+              "false_negatives": 10,
+              "recall": 0.23076923076923078
             },
             "conservative_0.8": {
-              "threshold": -7.117078635268164,
-              "true_positives": 8,
-              "false_positives": 55,
-              "false_negatives": 5,
-              "recall": 0.6153846153846154
-            },
-            "conservative_0.9": {
-              "threshold": -6.662887192866342,
+              "threshold": -7.193983593221003,
               "true_positives": 10,
               "false_positives": 55,
               "false_negatives": 3,
               "recall": 0.7692307692307693
             },
+            "conservative_0.9": {
+              "threshold": -6.610810789500608,
+              "true_positives": 9,
+              "false_positives": 55,
+              "false_negatives": 4,
+              "recall": 0.6923076923076923
+            },
             "conservative_0.95": {
-              "threshold": -6.2014539077935344,
+              "threshold": -6.244532694645848,
               "true_positives": 10,
               "false_positives": 55,
               "false_negatives": 3,
@@ -428,6 +434,6 @@
   "processing_time": {
     "rows": 24484,
     "events": 2167,
-    "seconds": 0.022
+    "seconds": 0.024
   }
 }
