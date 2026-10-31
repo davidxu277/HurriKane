@@ -1,0 +1,204 @@
+{
+  "metadata": {
+    "task": "final",
+    "features": [
+      "time_to_tca",
+      "miss_distance",
+      "relative_speed",
+      "relative_position_r",
+      "relative_position_t",
+      "relative_position_n",
+      "c_object_type",
+      "c_sigma_r",
+      "t_sigma_r",
+      "max_risk_estimate",
+      "F10",
+      "AP",
+      "risk",
+      "risk_delta",
+      "miss_distance_delta",
+      "message_count"
+    ],
+    "categorical_features": [
+      "c_object_type"
+    ],
+    "horizon_days": 2.0,
+    "label": "final 为同事件最后一条消息的 risk；current 为当前行 risk",
+    "units": {
+      "time_to_tca": "days",
+      "miss_distance": "m",
+      "relative_speed": "m/s"
+    },
+    "target_floor": -10.0,
+    "classifier_level": -6.0,
+    "split_seed": 42,
+    "alpha": 0.9,
+    "selection_level": -6.0,
+    "sigma_ratio_threshold": 0.08900458364819862,
+    "train_file": "data/raw/train_data.csv",
+    "events": {
+      "train": 5805,
+      "validation": 1244,
+      "holdout": 1244
+    },
+    "model_version": "20261031-044813"
+  },
+  "validation": {
+    "events": 1244,
+    "regression": {
+      "constant": {
+        "rmse": 0.7062544180973311,
+        "mae": 0.28616047213407997
+      },
+      "latest_risk": {
+        "rmse": 1.1112438478065234,
+        "mae": 0.3564236728591899
+      },
+      "estimate_model": {
+        "rmse": 0.5722182946201454,
+        "mae": 0.20248903080003827
+      }
+    },
+    "levels": {
+      "-4.0": {
+        "positive_events": 1,
+        "negative_events": 1243,
+        "baseline_fpr": 0.002413515687851971,
+        "at_threshold": {
+          "latest_risk": {
+            "precision": 0.25,
+            "recall": 1.0,
+            "f2": 0.625,
+            "true_positives": 1,
+            "false_positives": 3,
+            "false_negatives": 0
+          },
+          "estimate_model": {
+            "precision": null,
+            "recall": 0.0,
+            "f2": null,
+            "true_positives": 0,
+            "false_positives": 0,
+            "false_negatives": 1
+          }
+        },
+        "at_matched_fpr": {
+          "latest_risk": {
+            "threshold": -4.003882523862711,
+            "true_positives": 1,
+            "false_positives": 3,
+            "false_negatives": 0,
+            "recall": 1.0
+          },
+          "estimate_model": {
+            "threshold": -7.944223338434154,
+            "true_positives": 1,
+            "false_positives": 3,
+            "false_negatives": 0,
+            "recall": 1.0
+          },
+          "classifier": {
+            "threshold": 0.8984632132324364,
+            "true_positives": 0,
+            "false_positives": 3,
+            "false_negatives": 1,
+            "recall": 0.0
+          },
+          "conservative_0.8": {
+            "threshold": -6.499222284615259,
+            "true_positives": 0,
+            "false_positives": 3,
+            "false_negatives": 1,
+            "recall": 0.0
+          },
+          "conservative_0.9": {
+            "threshold": -5.793854875327876,
+            "true_positives": 0,
+            "false_positives": 3,
+            "false_negatives": 1,
+            "recall": 0.0
+          },
+          "conservative_0.95": {
+            "threshold": -5.637206653298547,
+            "true_positives": 1,
+            "false_positives": 3,
+            "false_negatives": 0,
+            "recall": 1.0
+          }
+        }
+      },
+      "-6.0": {
+        "positive_events": 10,
+        "negative_events": 1234,
+        "baseline_fpr": 0.025121555915721232,
+        "at_threshold": {
+          "latest_risk": {
+            "precision": 0.1388888888888889,
+            "recall": 0.5,
+            "f2": 0.3289473684210526,
+            "true_positives": 5,
+            "false_positives": 31,
+            "false_negatives": 5
+          },
+          "estimate_model": {
+            "precision": null,
+            "recall": 0.0,
+            "f2": null,
+            "true_positives": 0,
+            "false_positives": 0,
+            "false_negatives": 10
+          }
+        },
+        "at_matched_fpr": {
+          "latest_risk": {
+            "threshold": -6.0154726866562065,
+            "true_positives": 5,
+            "false_positives": 31,
+            "false_negatives": 5,
+            "recall": 0.5
+          },
+          "estimate_model": {
+            "threshold": -8.603454164422757,
+            "true_positives": 4,
+            "false_positives": 31,
+            "false_negatives": 6,
+            "recall": 0.4
+          },
+          "classifier": {
+            "threshold": 0.7288317402237443,
+            "true_positives": 6,
+            "false_positives": 31,
+            "false_negatives": 4,
+            "recall": 0.6
+          },
+          "conservative_0.8": {
+            "threshold": -7.23886894996544,
+            "true_positives": 3,
+            "false_positives": 31,
+            "false_negatives": 7,
+            "recall": 0.3
+          },
+          "conservative_0.9": {
+            "threshold": -6.776366496548424,
+            "true_positives": 6,
+            "false_positives": 31,
+            "false_negatives": 4,
+            "recall": 0.6
+          },
+          "conservative_0.95": {
+            "threshold": -6.201102129812394,
+            "true_positives": 6,
+            "false_positives": 31,
+            "false_negatives": 4,
+            "recall": 0.6
+          }
+        }
+      }
+    }
+  },
+  "processing_time": {
+    "rows": 24484,
+    "events": 2167,
+    "seconds": 0.016
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "task": "final",
+  "features": [
+    "time_to_tca",
+    "miss_distance",
+    "relative_speed",
+    "relative_position_r",
+    "relative_position_t",
+    "relative_position_n",
+    "c_object_type",
+    "c_sigma_r",
+    "t_sigma_r",
+    "max_risk_estimate",
+    "F10",
+    "AP",
+    "risk",
+    "risk_delta",
+    "miss_distance_delta",
+    "message_count"
+  ],
+  "categorical_features": [
+    "c_object_type"
+  ],
+  "horizon_days": 2.0,
+  "label": "final 为同事件最后一条消息的 risk；current 为当前行 risk",
+  "units": {
+    "time_to_tca": "days",
+    "miss_distance": "m",
+    "relative_speed": "m/s"
+  },
+  "target_floor": -10.0,
+  "classifier_level": -6.0,
+  "split_seed": 42,
+  "alpha": 0.9,
+  "selection_level": -6.0,
+  "sigma_ratio_threshold": 0.08900458364819862,
+  "train_file": "data/raw/train_data.csv",
+  "events": {
+    "train": 5805,
+    "validation": 1244,
+    "holdout": 1244
+  },
+  "model_version": "20261031-044813"
+}
